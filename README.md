@@ -1,138 +1,297 @@
 # Telegram Shopping Bot
 
-Private Telegram bot for:
+[English](#english) · [中文](#中文)
 
-- switching OpenRouter models
-- answering quoted Telegram messages
-- searching products with Google Custom Search
-- parsing product links
-- asking for a category
-- saving shopping items into a Notion database
+A private Telegram bot that saves shopping items to Notion, powered by OpenRouter AI. Includes a **CustomTkinter GUI** for setup, start/stop, and logs.
 
-## 1. Setup
+**Repository:** https://github.com/Young-Xia/telegram-shopping-bot
 
-```powershell
-cd D:\Programs\telegram-shopping-bot
-setup-env.cmd
-```
+---
 
-`setup-env.cmd` copies `.env.example` to `.env` and opens Notepad for editing.
-If you prefer prompts in PowerShell, run:
+## English
 
-```powershell
-powershell -ExecutionPolicy Bypass -File .\setup-env.ps1
-```
+### Features
 
-Do not commit `.env`.
+- **Save to Notion** — title, URL, category, status, notes, and timestamp
+- **Forward flow** — forward text, links, or photos → choose **Search / Add / Cancel**
+- **Photo recognition** — vision model identifies products from forwarded images
+- **AI product extraction** — reads reply chains and link previews to infer product name and category
+- **General AI search** — `/search` for Q&A unrelated to shopping (not saved to Notion)
+- **Model switching** — `/model` to switch OpenRouter models
+- **GUI control panel** — configure `.env`, start/stop/restart bot, view logs, light/dark theme
+- **Message acknowledgment** — reacts with 👀 when your message is received
 
-## 2. Required Credentials
+### Requirements
 
-### Telegram
+- Python **3.11+**
+- Windows (GUI scripts are Windows-oriented; the bot itself runs on any OS with Python)
+- Accounts / keys: **Telegram Bot**, **OpenRouter**, **Notion**
 
-Create a bot with `@BotFather`, then set:
+### Quick Start
 
-```env
-TELEGRAM_BOT_TOKEN=...
-```
-
-Recommended: restrict the bot to your own Telegram user ID:
-
-```env
-ALLOWED_TELEGRAM_USER_IDS=123456789
-```
-
-You can get your numeric Telegram user ID from bots such as `@userinfobot`.
-
-### OpenRouter
-
-Set your OpenRouter key:
-
-```env
-OPENROUTER_API_KEY=...
-OPENROUTER_DEFAULT_MODEL=openrouter/free
-OPENROUTER_MODELS=openrouter/free,qwen/qwen3-coder:free,qwen/qwen3-next-80b-a3b-instruct:free
-```
-
-These are direct OpenRouter model IDs. The bot also accepts OpenClaw-style
-`openrouter/qwen/...` refs and normalizes them before sending requests.
-
-### Google Custom Search
-
-Optional. Default search uses DuckDuckGo and needs no API key.
-
-To use Google instead, set:
-
-```env
-SEARCH_PROVIDER=google
-GOOGLE_CSE_API_KEY=...
-GOOGLE_CSE_ID=...
-```
-
-### Notion
-
-Create a Notion integration and share your shopping database with it.
-
-Set:
-
-```env
-NOTION_TOKEN=...
-NOTION_DATABASE_ID=...
-```
-
-Create these database properties in Notion:
-
-- `Name`: title
-- `URL`: url
-- `Category`: select
-- `Status`: status, with an option named `Want`
-- `Notes`: text/rich text
-- `Added At`: date
-
-If you use different property names, update the matching `NOTION_*_PROPERTY` values in `.env`.
-
-## 3. Run
-
-First check all external services:
+**1. Clone and install**
 
 ```powershell
-cd D:\Programs\telegram-shopping-bot
-check.cmd
+git clone https://github.com/Young-Xia/telegram-shopping-bot.git
+cd telegram-shopping-bot
+.\bootstrap-gui.cmd
 ```
 
-Then run the bot:
+**2. Configure**
+
+- Open the GUI: double-click `打开控制面板.bat` or run `start-gui.vbs`
+- Go to **Setup**, fill in API keys, click **Save**
+- Click **Test connection** to verify Telegram / OpenRouter / Notion
+
+Or copy and edit manually:
 
 ```powershell
-start-shopping-bot.cmd
+copy .env.example .env
+# Edit .env with your credentials
 ```
 
-This disconnects Telegram from OpenClaw (same bot token cannot run in two apps), then starts the shopping bot.
+**3. Run**
 
-Or use `run.cmd` if OpenClaw is not using your Telegram bot.
+- From the GUI: **Control** → **Start**
+- Or from the command line:
 
-## 4. Commands
-
-```text
-/start
-/help
-/model
-/model openrouter/free
-/ask 你好
-/search 机械键盘
-/search https://example.com/product
+```powershell
+.\start-bot-background.cmd
 ```
 
-Quoted-message Q&A:
+> **Note:** The same Telegram Bot Token cannot run in two apps at once. Stop other instances before starting.
 
-1. Reply to a Telegram message.
-2. Send `/ask`.
-3. The bot answers the quoted message using your current model.
+### Environment Variables
 
-In private chat, replying with normal text also asks the bot to answer the quoted message.
-In groups, mention the bot in the reply to avoid accidental auto-responses.
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `TELEGRAM_BOT_TOKEN` | Yes | From [@BotFather](https://t.me/BotFather) |
+| `ALLOWED_TELEGRAM_USER_IDS` | No | Comma-separated user IDs; empty = no restriction |
+| `OPENROUTER_API_KEY` | Yes | From [OpenRouter](https://openrouter.ai) |
+| `OPENROUTER_DEFAULT_MODEL` | No | Default chat model (default: `openrouter/free`) |
+| `OPENROUTER_VISION_MODEL` | No | Vision model for photos (default: `google/gemini-2.0-flash-001`) |
+| `OPENROUTER_MODELS` | No | Comma-separated models for `/model` |
+| `NOTION_TOKEN` | Yes | Notion integration secret |
+| `NOTION_DATABASE_ID` | Yes | 32-character database ID |
+| `SEARCH_PROVIDER` | No | `duckduckgo` (default) or `google` |
+| `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_ID` | No | Only if `SEARCH_PROVIDER=google` |
 
-## 5. Shopping Flow
+Notion database properties (names configurable via `NOTION_*_PROPERTY`):
 
-1. Send `/search 商品名` or `/search 商品链接`.
-2. If it is a keyword, choose one Google result.
-3. Choose an existing Notion category or add a new one.
-4. The bot creates a Notion page with title, URL, category, status, notes, and added time.
+| Property | Type |
+|----------|------|
+| Name | Title |
+| URL | URL |
+| Category | Select |
+| Status | Status |
+| Notes | Text |
+| Added At | Date |
+
+See [NOTION-SETUP.md](./NOTION-SETUP.md) for detailed Notion setup.
+
+### Bot Commands
+
+| Command | Description |
+|---------|-------------|
+| `/start` | Welcome message |
+| `/help` | Command list |
+| `/save` | AI-extract product from a reply chain and save |
+| `/search <query>` | General AI search (not saved to Notion) |
+| `/ask <question>` | Ask AI (can reply to a message with `/ask`) |
+| `/add <name> <url>` | Add item by link |
+| `/model [name]` | View or switch AI model |
+| `/clear` | Clear AI conversation context |
+| `/cancel` | Cancel current shopping flow |
+
+### Shopping Workflows
+
+**Forward a message**
+
+1. Forward text, a link, or a photo to the bot
+2. Bot reacts with 👀 and shows a preview
+3. Tap **Search**, **Add to list**, or **Cancel**
+
+**Reply chain**
+
+1. Reply to a message containing product info
+2. Send `/save`
+3. AI extracts product details → pick a Notion category → saved
+
+**Quick paste**
+
+Send `description + product URL` directly → choose category → saved
+
+### Project Structure
+
+```
+telegram-shopping-bot/
+├── src/shopping_bot/
+│   ├── bot.py              # Telegram bot handlers
+│   ├── config.py           # Settings loader
+│   ├── gui/                # CustomTkinter control panel
+│   └── services/           # Notion, OpenRouter, search, vision
+├── scripts/                # Setup checks
+├── bootstrap-gui.cmd       # First-time install
+├── start-gui.vbs           # Launch GUI
+├── start-bot-background.cmd
+└── .env.example
+```
+
+### Development
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\pip install -e .
+python -m shopping_bot.bot          # bot only
+python -m shopping_bot.gui          # GUI
+python scripts/check_setup.py       # test connections
+```
+
+### License
+
+Personal project — use and modify freely. Do **not** commit `.env` or API keys.
+
+---
+
+## 中文
+
+### 功能
+
+- **保存到 Notion** — 名称、链接、分类、状态、备注、添加时间
+- **转发流程** — 转发文字、链接或照片 → 选择 **搜索 / 添加商品 / 取消**
+- **照片识别** — 视觉模型识别转发图片中的商品信息
+- **AI 商品提取** — 阅读回复链和链接预览，推断商品名与分类
+- **AI 通用搜索** — `/search` 用于与购物无关的问答（不写入 Notion）
+- **模型切换** — `/model` 切换 OpenRouter 模型
+- **GUI 控制面板** — 配置 `.env`、启停/重启机器人、查看日志、浅色/深色主题
+- **消息确认** — 收到消息时用 👀 表情回应
+
+### 环境要求
+
+- Python **3.11+**
+- Windows（GUI 脚本面向 Windows；机器人本体可在任意 Python 环境运行）
+- 需要：**Telegram Bot**、**OpenRouter**、**Notion** 账号与密钥
+
+### 快速开始
+
+**1. 克隆并安装**
+
+```powershell
+git clone https://github.com/Young-Xia/telegram-shopping-bot.git
+cd telegram-shopping-bot
+.\bootstrap-gui.cmd
+```
+
+**2. 配置**
+
+- 打开控制面板：双击 `打开控制面板.bat` 或运行 `start-gui.vbs`
+- 进入 **初始设置**，填写密钥后点 **保存配置**
+- 点 **测试连接** 检查 Telegram / OpenRouter / Notion
+
+或手动配置：
+
+```powershell
+copy .env.example .env
+# 编辑 .env 填入密钥
+```
+
+**3. 运行**
+
+- 控制面板：**运行控制** → **启动**
+- 或命令行：
+
+```powershell
+.\start-bot-background.cmd
+```
+
+> **注意：** 同一个 Telegram Bot Token 不能同时在两个程序里运行，启动前请先停止其他实例。
+
+### 环境变量
+
+| 变量 | 必填 | 说明 |
+|------|------|------|
+| `TELEGRAM_BOT_TOKEN` | 是 | 从 [@BotFather](https://t.me/BotFather) 获取 |
+| `ALLOWED_TELEGRAM_USER_IDS` | 否 | 逗号分隔的用户 ID；留空则不限制 |
+| `OPENROUTER_API_KEY` | 是 | 从 [OpenRouter](https://openrouter.ai) 获取 |
+| `OPENROUTER_DEFAULT_MODEL` | 否 | 默认对话模型（默认 `openrouter/free`） |
+| `OPENROUTER_VISION_MODEL` | 否 | 照片识别模型（默认 `google/gemini-2.0-flash-001`） |
+| `OPENROUTER_MODELS` | 否 | 供 `/model` 切换的模型列表 |
+| `NOTION_TOKEN` | 是 | Notion Integration Secret |
+| `NOTION_DATABASE_ID` | 是 | 32 位数据库 ID |
+| `SEARCH_PROVIDER` | 否 | `duckduckgo`（默认）或 `google` |
+| `GOOGLE_CSE_API_KEY` / `GOOGLE_CSE_ID` | 否 | 仅 `SEARCH_PROVIDER=google` 时需要 |
+
+Notion 数据库属性（名称可通过 `NOTION_*_PROPERTY` 自定义）：
+
+| 属性 | 类型 |
+|------|------|
+| 名称 | 标题 (Title) |
+| 链接 | 链接 (URL) |
+| 分类 | 选择 (Select) |
+| 状态 | 状态 (Status) |
+| 备注 | 文本 (Text) |
+| Added At | 日期 (Date) |
+
+详细 Notion 配置见 [NOTION-SETUP.md](./NOTION-SETUP.md)。
+
+### 机器人命令
+
+| 命令 | 说明 |
+|------|------|
+| `/start` | 欢迎说明 |
+| `/help` | 命令列表 |
+| `/save` | 从回复链 AI 提取商品并保存 |
+| `/search <问题>` | AI 通用搜索（不写入 Notion） |
+| `/ask <问题>` | 向 AI 提问（可回复消息后发送 `/ask`） |
+| `/add <名称> <链接>` | 通过链接添加商品 |
+| `/model [模型名]` | 查看或切换 AI 模型 |
+| `/clear` | 清除 AI 对话上下文 |
+| `/cancel` | 取消当前购物流程 |
+
+### 购物流程
+
+**转发消息**
+
+1. 将文字、链接或照片转发给机器人
+2. 机器人回复 👀 并显示预览
+3. 点击 **搜索**、**添加商品** 或 **取消**
+
+**回复链保存**
+
+1. 回复一条包含商品信息的消息
+2. 发送 `/save`
+3. AI 提取商品信息 → 选择 Notion 分类 → 保存
+
+**快速粘贴**
+
+直接发送「描述 + 商品链接」→ 选择分类 → 保存
+
+### 项目结构
+
+```
+telegram-shopping-bot/
+├── src/shopping_bot/
+│   ├── bot.py              # Telegram 机器人主逻辑
+│   ├── config.py           # 配置加载
+│   ├── gui/                # CustomTkinter 控制面板
+│   └── services/           # Notion、OpenRouter、搜索、视觉识别
+├── scripts/                # 连接测试脚本
+├── bootstrap-gui.cmd       # 首次安装依赖
+├── start-gui.vbs           # 启动控制面板
+├── start-bot-background.cmd
+└── .env.example
+```
+
+### 开发
+
+```powershell
+python -m venv .venv
+.\.venv\Scripts\pip install -e .
+python -m shopping_bot.bot          # 仅运行机器人
+python -m shopping_bot.gui          # 控制面板
+python scripts/check_setup.py       # 测试连接
+```
+
+### 许可
+
+个人项目，可自由使用和修改。请勿提交 `.env` 或 API 密钥。
