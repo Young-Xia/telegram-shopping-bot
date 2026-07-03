@@ -14,7 +14,7 @@ BOT_TUTORIAL_ZH = """\
   /save    从回复链 AI 提取商品并保存
   /search  关键词搜索或 AI 通用问答（与购物无关时不写入 Notion）
   /ask     向 AI 提问（可回复某条消息后发送 /ask）
-  /model   查看或切换 OpenRouter 模型
+  /model   查看或切换 AI 模型
   /clear   清除 AI 对话上下文
   /cancel  取消当前购物流程
 
@@ -29,7 +29,7 @@ BOT_TUTORIAL_ZH = """\
 
 五、提示
   • 同一 Telegram Bot Token 不能同时在两个程序里运行
-  • 修改 .env 后请在控制面板重启机器人
+  • 修改 .env 或切换 AI 服务商后，请在控制面板重启机器人
 """
 
 SETUP_GUIDE_ZH = """\
@@ -48,16 +48,55 @@ SETUP_GUIDE_ZH = """\
   • 留空表示不限制
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-二、OpenRouter（AI 模型）
+二、AI 模型 / API（支持多家服务商）
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-1. 打开 https://openrouter.ai 注册并登录
-2. 进入 Keys 页面创建 API Key
-3. 填入「OpenRouter API Key」（sk-or-v1-...）
+本机器人使用 OpenAI 兼容的 Chat Completions 接口，可接入多家 API。
+
+必填：
+  • 「AI API Key」— 对应服务商的密钥
 
 可选：
-  • 「默认对话模型」留空则使用 openrouter/free
-  • 「视觉识别模型」用于识别转发的照片，须支持 vision
-  • 「可选模型列表」用逗号分隔，供 /model 切换
+  • 「AI API 地址」— 留空默认 OpenRouter
+  • 「默认对话模型」— 须与所选服务商匹配
+  • 「视觉识别模型」— 识别转发照片时使用，须支持 vision
+  • 「可选模型列表」— 逗号分隔，供 /model 切换
+
+常用配置示例：
+
+  OpenRouter（默认，多模型聚合）
+    API 地址: https://openrouter.ai/api/v1
+    Key: 在 https://openrouter.ai 创建
+    模型示例: openrouter/free, google/gemini-2.5-flash
+
+  DeepSeek
+    API 地址: https://api.deepseek.com/v1
+    Key: 在 platform.deepseek.com 创建
+    模型示例: deepseek-chat
+    ⚠ DeepSeek 不支持图片，照片识别需另配「视觉 API」（见下）
+
+  照片识别（与对话 API 分开配置）
+    若主 API 不支持图片（如 DeepSeek），请额外填写：
+      • 视觉 API 地址: https://openrouter.ai/api/v1
+      • 视觉 API Key: 你的 OpenRouter Key
+      • 视觉识别模型: google/gemini-2.5-flash
+
+  OpenAI
+    API 地址: https://api.openai.com/v1
+    Key: 在 platform.openai.com 创建
+    模型示例: gpt-4o-mini, gpt-4o
+
+  DeepSeek
+    API 地址: https://api.deepseek.com/v1
+    Key: 在 platform.deepseek.com 创建
+    模型示例: deepseek-chat
+
+  其他兼容接口（如 Groq、Together、本地 LM Studio / Ollama 等）
+    API 地址: 填写服务商文档中的 /v1 地址
+    模型示例: 按该服务商文档填写
+
+提示：
+  • 切换服务商后，请同步修改「默认对话模型」和「视觉识别模型」
+  • 旧版 .env 中的 OPENROUTER_* 变量仍可使用，会自动映射到新字段
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 三、Notion 购物清单
@@ -89,7 +128,7 @@ SETUP_GUIDE_ZH = """\
 四、保存与验证
 ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
 1. 点击「保存配置」写入 .env
-2. 点击「测试连接」检查 Telegram / OpenRouter / Notion
+2. 点击「测试连接」检查 Telegram / AI API / Notion
 3. 全部通过后，到「运行控制」页点击「启动」
 
 提示：Token 复制时不要带空格；修改配置后需重启机器人才生效。

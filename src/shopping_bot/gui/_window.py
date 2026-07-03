@@ -12,6 +12,7 @@ from shopping_bot.gui.env_store import (
     AI_SETUP_FIELDS,
     CORE_SETUP_FIELDS,
     DEFAULT_VISION_MODEL,
+    apply_ai_defaults,
     create_env_from_example,
     load_merged_env,
     missing_required_fields,
@@ -522,7 +523,7 @@ class ShoppingBotApp(ctk.CTk):
         )
         self.btn_restart.grid(row=0, column=2, sticky="ew", padx=(8, 0))
 
-        ai_card, ai_body = self._card(self._control_scroll, "AI 模型")
+        ai_card, ai_body = self._card(self._control_scroll, "AI 模型 / API")
         ai_card.pack(fill="x", padx=8, pady=(8, 0))
         ai_body.grid_columnconfigure(0, weight=1)
 
@@ -538,7 +539,10 @@ class ShoppingBotApp(ctk.CTk):
 
         vision_hint = ctk.CTkLabel(
             ai_body,
-            text=f"转发/发送照片时使用，须支持 vision。留空则默认 {DEFAULT_VISION_MODEL}",
+            text=(
+                "转发/发送照片时使用。"
+                "若主 API 不支持图片（如 DeepSeek），请在「初始设置」填写视觉 API 地址/Key/模型。"
+            ),
             anchor="w",
             text_color=p.text_muted,
             font=_font(12),
@@ -726,7 +730,7 @@ class ShoppingBotApp(ctk.CTk):
             return row + 1
 
         next_row = _add_field_section(0, "基础配置", CORE_SETUP_FIELDS)
-        next_row = _add_field_section(next_row, "AI 模型", AI_SETUP_FIELDS)
+        next_row = _add_field_section(next_row, "AI 模型 / API", AI_SETUP_FIELDS)
 
         self.advanced_frame = ctk.CTkFrame(
             scroll,
@@ -1150,14 +1154,14 @@ class ShoppingBotApp(ctk.CTk):
         if not hasattr(self, "vision_model_entry"):
             return
         merged = values if values is not None else load_merged_env()
-        model = merged.get("OPENROUTER_VISION_MODEL", "").strip() or DEFAULT_VISION_MODEL
+        model = merged.get("AI_VISION_MODEL", "").strip() or DEFAULT_VISION_MODEL
         self.vision_model_entry.delete(0, "end")
         self.vision_model_entry.insert(0, model)
 
     def _save_vision_model(self) -> None:
         model = self.vision_model_entry.get().strip() or DEFAULT_VISION_MODEL
         try:
-            path = patch_env({"OPENROUTER_VISION_MODEL": model})
+            path = patch_env({"AI_VISION_MODEL": model})
         except OSError as exc:
             self.control_message.configure(
                 text=f"保存失败: {exc}",
@@ -1165,9 +1169,9 @@ class ShoppingBotApp(ctk.CTk):
             )
             return
         if self._cached_env is not None:
-            self._cached_env["OPENROUTER_VISION_MODEL"] = model
-        if self._setup_built and "OPENROUTER_VISION_MODEL" in self._field_rows:
-            self._field_rows["OPENROUTER_VISION_MODEL"].set(model)
+            self._cached_env["AI_VISION_MODEL"] = model
+        if self._setup_built and "AI_VISION_MODEL" in self._field_rows:
+            self._field_rows["AI_VISION_MODEL"].set(model)
         self.control_message.configure(
             text=f"视觉模型已保存到 {path}，修改后请重启机器人生效。",
             text_color=self.palette.success,
@@ -1184,9 +1188,14 @@ class ShoppingBotApp(ctk.CTk):
                 text_color=self.palette.warn,
             )
             return
+        values, auto_notes = apply_ai_defaults(values)
         path = save_env(values)
         self._cached_env = values
-        self.setup_message.configure(text=f"配置已保存到 {path}", text_color=self.palette.success)
+        self._apply_env_to_fields(values)
+        message = f"配置已保存到 {path}"
+        if auto_notes:
+            message += f"\n（{'；'.join(auto_notes)}）"
+        self.setup_message.configure(text=message, text_color=self.palette.success)
 
     def _create_from_example(self) -> None:
         if not self._setup_built:
@@ -1281,7 +1290,10 @@ class ShoppingBotApp(ctk.CTk):
                 text_color=self.palette.warn,
             )
             return
+        values, _auto_notes = apply_ai_defaults(values)
         save_env(values)
+        self._cached_env = values
+        self._apply_env_to_fields(values)
         self._run_action(self._do_check)
 
     def _do_check(self) -> tuple[bool, str]:

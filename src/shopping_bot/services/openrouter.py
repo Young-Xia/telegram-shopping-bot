@@ -22,17 +22,24 @@ def normalize_openrouter_model(model: str) -> str:
 
 
 class OpenRouterClient:
-    def __init__(self, api_key: str) -> None:
+    def __init__(
+        self,
+        api_key: str,
+        *,
+        base_url: str = "https://openrouter.ai/api/v1",
+    ) -> None:
         self._api_key = api_key
+        headers = {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
+        if "openrouter.ai" in base_url:
+            headers["HTTP-Referer"] = "https://localhost/telegram-shopping-bot"
+            headers["X-Title"] = "Telegram Shopping Bot"
         self._client = httpx.AsyncClient(
-            base_url="https://openrouter.ai/api/v1",
+            base_url=base_url.rstrip("/"),
             timeout=httpx.Timeout(60.0),
-            headers={
-                "Authorization": f"Bearer {api_key}",
-                "Content-Type": "application/json",
-                "HTTP-Referer": "https://localhost/telegram-shopping-bot",
-                "X-Title": "Telegram Shopping Bot",
-            },
+            headers=headers,
         )
 
     async def _chat(
@@ -56,11 +63,11 @@ class OpenRouterClient:
         data = response.json()
         choices = data.get("choices") or []
         if not choices:
-            raise RuntimeError("OpenRouter returned no choices")
+            raise RuntimeError("AI API returned no choices")
         message = choices[0].get("message") or {}
         content = message.get("content")
         if not content:
-            raise RuntimeError("OpenRouter returned an empty answer")
+            raise RuntimeError("AI API returned an empty answer")
         return str(content).strip()
 
     async def answer(

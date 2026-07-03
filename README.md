@@ -69,7 +69,7 @@ copy .env.example .env
 | `ALLOWED_TELEGRAM_USER_IDS` | No | Comma-separated user IDs; empty = no restriction |
 | `OPENROUTER_API_KEY` | Yes | From [OpenRouter](https://openrouter.ai) |
 | `OPENROUTER_DEFAULT_MODEL` | No | Default chat model (default: `openrouter/free`) |
-| `OPENROUTER_VISION_MODEL` | No | Vision model for photos (default: `google/gemini-2.0-flash-001`) |
+| `OPENROUTER_VISION_MODEL` | No | Vision model for photos (default: `google/gemini-2.5-flash`) |
 | `OPENROUTER_MODELS` | No | Comma-separated models for `/model` |
 | `NOTION_TOKEN` | Yes | Notion integration secret |
 | `NOTION_DATABASE_ID` | Yes | 32-character database ID |
@@ -214,7 +214,7 @@ copy .env.example .env
 | `ALLOWED_TELEGRAM_USER_IDS` | 否 | 逗号分隔的用户 ID；留空则不限制 |
 | `OPENROUTER_API_KEY` | 是 | 从 [OpenRouter](https://openrouter.ai) 获取 |
 | `OPENROUTER_DEFAULT_MODEL` | 否 | 默认对话模型（默认 `openrouter/free`） |
-| `OPENROUTER_VISION_MODEL` | 否 | 照片识别模型（默认 `google/gemini-2.0-flash-001`） |
+| `OPENROUTER_VISION_MODEL` | 否 | 照片识别模型（默认 `google/gemini-2.5-flash`） |
 | `OPENROUTER_MODELS` | 否 | 供 `/model` 切换的模型列表 |
 | `NOTION_TOKEN` | 是 | Notion Integration Secret |
 | `NOTION_DATABASE_ID` | 是 | 32 位数据库 ID |

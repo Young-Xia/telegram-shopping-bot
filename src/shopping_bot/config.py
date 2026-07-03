@@ -37,11 +37,58 @@ class NotionConfig:
     added_at_property: str | None
 
 
+DEFAULT_AI_API_BASE_URL = "https://openrouter.ai/api/v1"
+
+DEFAULT_VISION_MODEL = "google/gemini-2.5-flash"
+
+_DEPRECATED_VISION_MODELS: dict[str, str] = {
+    "google/gemini-2.0-flash-001": DEFAULT_VISION_MODEL,
+    "google/gemini-2.0-flash": DEFAULT_VISION_MODEL,
+    "google/gemini-2.0-flash-exp": DEFAULT_VISION_MODEL,
+    "google/gemini-2.0-flash-exp:free": DEFAULT_VISION_MODEL,
+}
+
+
+def normalize_vision_model(model: str) -> str:
+    cleaned = model.strip()
+    if not cleaned:
+        return cleaned
+    return _DEPRECATED_VISION_MODELS.get(cleaned, cleaned)
+
+
+# (host fragment, default chat model, default vision model or "" if unsupported)
+_PROVIDER_DEFAULTS: tuple[tuple[str, str, str], ...] = (
+    ("openrouter.ai", "openrouter/free", DEFAULT_VISION_MODEL),
+    ("api.openai.com", "gpt-4o-mini", "gpt-4o"),
+    ("deepseek.com", "deepseek-chat", ""),
+    ("groq.com", "llama-3.3-70b-versatile", ""),
+)
+
+
+def provider_supports_vision(base_url: str) -> bool:
+    lowered = base_url.lower()
+    for marker, _chat, vision in _PROVIDER_DEFAULTS:
+        if marker in lowered:
+            return bool(vision)
+    return True
+
+
+def infer_ai_defaults(base_url: str) -> tuple[str, str]:
+    lowered = base_url.lower()
+    for marker, chat_model, vision_model in _PROVIDER_DEFAULTS:
+        if marker in lowered:
+            return chat_model, vision_model
+    return "gpt-4o-mini", "gpt-4o-mini"
+
+
 @dataclass(frozen=True)
 class Settings:
     telegram_bot_token: str
     allowed_user_ids: set[int]
-    openrouter_api_key: str
+    ai_api_key: str
+    ai_api_base_url: str
+    ai_vision_api_key: str | None
+    ai_vision_api_base_url: str | None
     default_model: str
     vision_model: str
     models: list[str]
@@ -50,6 +97,11 @@ class Settings:
     google_cse_id: str | None
     search_result_count: int
     notion: NotionConfig
+
+    @property
+    def openrouter_api_key(self) -> str:
+        """Backward-compatible alias for older code paths."""
+        return self.ai_api_key
 
     def model_aliases(self) -> dict[str, str]:
         aliases: dict[str, str] = {}
@@ -86,16 +138,47 @@ def load_settings(env_files: Iterable[str] = (".env",)) -> Settings:
             # Always prefer values from the project .env over stale process env.
             load_dotenv(path, override=True)
 
-    default_model = os.getenv("OPENROUTER_DEFAULT_MODEL", "openrouter/free")
-    vision_model = os.getenv("OPENROUTER_VISION_MODEL", "google/gemini-2.0-flash-001")
-    models = _csv(os.getenv("OPENROUTER_MODELS")) or [default_model]
+    ai_api_key = optional_env("AI_API_KEY") or require_env("OPENROUTER_API_KEY")
+    ai_api_base_url = (
+        optional_env("AI_API_BASE_URL")
+        or optional_env("OPENROUTER_API_BASE_URL")
+        or DEFAULT_AI_API_BASE_URL
+    )
+    ai_vision_api_key = optional_env("AI_VISION_API_KEY")
+    ai_vision_api_base_url = optional_env("AI_VISION_API_BASE_URL")
+
+    chat_default, main_vision_default = infer_ai_defaults(ai_api_base_url)
+    default_model = (
+        optional_env("AI_DEFAULT_MODEL")
+        or optional_env("OPENROUTER_DEFAULT_MODEL")
+        or chat_default
+    )
+
+    if ai_vision_api_base_url and ai_vision_api_key:
+        _, vision_default = infer_ai_defaults(ai_vision_api_base_url)
+        if not vision_default:
+            vision_default = DEFAULT_VISION_MODEL
+    elif provider_supports_vision(ai_api_base_url):
+        vision_default = main_vision_default
+    else:
+        vision_default = ""
+
+    vision_model = normalize_vision_model(
+        optional_env("AI_VISION_MODEL")
+        or optional_env("OPENROUTER_VISION_MODEL")
+        or vision_default
+    )
+    models = _csv(optional_env("AI_MODELS") or optional_env("OPENROUTER_MODELS")) or [default_model]
     if default_model not in models:
         models.insert(0, default_model)
 
     return Settings(
         telegram_bot_token=require_env("TELEGRAM_BOT_TOKEN"),
         allowed_user_ids=_int_csv(os.getenv("ALLOWED_TELEGRAM_USER_IDS")),
-        openrouter_api_key=require_env("OPENROUTER_API_KEY"),
+        ai_api_key=ai_api_key,
+        ai_api_base_url=ai_api_base_url.rstrip("/"),
+        ai_vision_api_key=ai_vision_api_key,
+        ai_vision_api_base_url=ai_vision_api_base_url.rstrip("/") if ai_vision_api_base_url else None,
         default_model=default_model,
         vision_model=vision_model,
         models=models,

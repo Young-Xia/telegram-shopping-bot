@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import logging
 
+import httpx
 from telegram import Bot, Message
 
 from shopping_bot.services.openrouter import OpenRouterClient
@@ -60,6 +61,15 @@ async def analyze_chain_images(
             if description:
                 label = f"图片{idx}" if len(file_ids) > 1 else "图片"
                 parts.append(f"{label}：{description}")
+        except httpx.HTTPStatusError as exc:
+            detail = exc.response.text[:300]
+            logger.warning(
+                "Image analysis failed for file_id=%s: %s %s",
+                file_id,
+                exc.response.status_code,
+                detail,
+                exc_info=True,
+            )
         except Exception:
             logger.warning("Image analysis failed for file_id=%s", file_id, exc_info=True)
     return "\n\n".join(parts)

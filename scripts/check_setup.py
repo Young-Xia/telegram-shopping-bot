@@ -21,7 +21,7 @@ PLACEHOLDERS = {"replace_me", "123456:replace_me", "sk-or-v1-replace_me", "secre
 def _reject_placeholders(settings) -> None:
     pairs = {
         "TELEGRAM_BOT_TOKEN": settings.telegram_bot_token,
-        "OPENROUTER_API_KEY": settings.openrouter_api_key,
+        "AI_API_KEY": settings.ai_api_key,
         "NOTION_TOKEN": settings.notion.token,
         "NOTION_DATABASE_ID": settings.notion.database_id,
     }
@@ -86,12 +86,12 @@ async def check_telegram(token: str) -> None:
         print(f"OK Telegram bot: @{user.get('username')}")
 
 
-async def check_openrouter(client: OpenRouterClient, model: str) -> None:
+async def check_ai_api(client: OpenRouterClient, model: str, base_url: str) -> None:
     answer = await client.answer(model=model, prompt="Reply exactly: BOT_CHECK_OK")
     if "BOT_CHECK_OK" not in answer.upper():
-        print(f"WARN OpenRouter answer unexpected (continuing): {answer[:120]}")
+        print(f"WARN AI API answer unexpected (continuing): {answer[:120]}")
     else:
-        print(f"OK OpenRouter model: {model}")
+        print(f"OK AI API ({base_url}): {model}")
 
 
 async def check_search(search: SearchService, provider: str) -> None:
@@ -147,7 +147,7 @@ async def main() -> None:
     args = parser.parse_args()
 
     settings = load_settings([str(ROOT / ".env")])
-    openrouter = OpenRouterClient(settings.openrouter_api_key)
+    openrouter = OpenRouterClient(settings.ai_api_key, base_url=settings.ai_api_base_url)
     search = SearchService(
         settings.search_result_count,
         provider=settings.search_provider,
@@ -158,7 +158,7 @@ async def main() -> None:
     errors: list[str] = []
     checks: list[tuple[str, object]] = [
         ("Telegram", check_telegram(settings.telegram_bot_token)),
-        ("OpenRouter", check_openrouter(openrouter, settings.default_model)),
+        ("AI API", check_ai_api(openrouter, settings.default_model, settings.ai_api_base_url)),
         ("Search", check_search(search, settings.search_provider)),
         ("Notion", check_notion(notion)),
     ]

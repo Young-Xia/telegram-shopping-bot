@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 import re
 import sys
 from dataclasses import asdict
@@ -28,7 +29,7 @@ from telegram.ext import (
 )
 
 from shopping_bot.categories import DEFAULT_CATEGORIES
-from shopping_bot.config import Settings, load_settings
+from shopping_bot.config import Settings, load_settings, provider_supports_vision
 from shopping_bot.models import ProductAnalysis, SearchResult, ShoppingItem
 from shopping_bot.services.notion import NotionClient
 from shopping_bot.services.openrouter import OpenRouterClient
@@ -63,6 +64,32 @@ def _settings(context: ContextTypes.DEFAULT_TYPE) -> Settings:
 
 def _openrouter(context: ContextTypes.DEFAULT_TYPE) -> OpenRouterClient:
     return context.application.bot_data["openrouter"]
+
+
+def _vision_client(context: ContextTypes.DEFAULT_TYPE) -> OpenRouterClient | None:
+    return context.application.bot_data.get("vision_client")
+
+
+def _vision_ready(context: ContextTypes.DEFAULT_TYPE) -> bool:
+    client = _vision_client(context)
+    settings = _settings(context)
+    return bool(client and settings.vision_model.strip())
+
+
+def _vision_unavailable_message(context: ContextTypes.DEFAULT_TYPE) -> str:
+    settings = _settings(context)
+    if settings.ai_vision_api_base_url and not settings.ai_vision_api_key:
+        return "请在设置中填写「视觉 API Key」。"
+    if settings.ai_vision_api_key and not settings.ai_vision_api_base_url:
+        return "请在设置中填写「视觉 API 地址」。"
+    if not settings.vision_model.strip():
+        return "请在设置中填写「视觉识别模型」。"
+    if not provider_supports_vision(settings.ai_api_base_url):
+        return (
+            "当前对话 API 不支持图片识别（如 DeepSeek）。"
+            "请在设置中填写「视觉 API 地址 / Key / 模型」（可用 OpenRouter）。"
+        )
+    return "图片识别暂时不可用，请稍后重试。"
 
 
 def _search(context: ContextTypes.DEFAULT_TYPE) -> SearchService:
@@ -287,6 +314,21 @@ def _format_chain_for_ai(chain: list[Message]) -> str:
     return "\n\n".join(parts)
 
 
+_PHOTO_ONLY_LINE_RE = re.compile(
+    r"^\[\d+(?:\s+转发(?:自\s+.+)?)?\]\s*\((?:图片|无文字)\)\s*$"
+)
+
+
+def _extract_meaningful_thread_text(thread_text: str) -> str:
+    blocks: list[str] = []
+    for block in thread_text.split("\n\n"):
+        cleaned = block.strip()
+        if not cleaned or _PHOTO_ONLY_LINE_RE.fullmatch(cleaned):
+            continue
+        blocks.append(cleaned)
+    return "\n\n".join(blocks).strip()
+
+
 async def _build_link_hint(context: ContextTypes.DEFAULT_TYPE, urls: list[str]) -> str:
     if not urls:
         return ""
@@ -321,11 +363,17 @@ async def _build_image_hint(context: ContextTypes.DEFAULT_TYPE, chain: list[Mess
     photo_ids = collect_photo_file_ids(chain)
     if not photo_ids:
         return ""
+    client = _vision_client(context)
+    if not client:
+        return ""
+    model = _vision_model(context)
+    if not model.strip():
+        return ""
     return await analyze_chain_images(
         bot=context.bot,
-        client=_openrouter(context),
+        client=client,
         chain=chain,
-        model=_vision_model(context),
+        model=model,
     )
 
 
@@ -709,6 +757,8 @@ async def _begin_forward_menu(
         preview_lines.append(thread_text.strip()[:350])
     if image_hint:
         preview_lines.append(f"图片识别: {image_hint[:350]}")
+    elif photo_ids and not _vision_ready(context):
+        preview_lines.append(f"⚠ {_vision_unavailable_message(context)}")
     elif link_hint:
         preview_lines.append(link_hint.split("\n", 1)[0])
     if urls:
@@ -885,39 +935,52 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             return
 
         search_text = payload["thread_text"].strip()
+        meaningful_text = _extract_meaningful_thread_text(search_text)
         urls = payload.get("urls") or []
         image_hint = payload.get("image_hint") or ""
         photo_ids = payload.get("photo_file_ids") or []
-        if not search_text and image_hint:
-            search_text = f"请介绍以下图片中的商品或物品：\n{image_hint}"
-        if not search_text and urls:
-            search_text = f"请介绍这个链接的内容: {urls[0]}"
-        if not search_text and not photo_ids:
+        vision_client = _vision_client(context)
+
+        if not photo_ids and not meaningful_text and not urls and not image_hint:
             await query.edit_message_text("转发内容里没有可搜索的文字或图片。")
             return
 
         await query.edit_message_text("搜索中…")
         try:
             history = _get_chat_history(context)
-            if photo_ids and not payload["thread_text"].strip() and not urls:
+            if photo_ids:
+                if not vision_client:
+                    await query.edit_message_text(
+                        f"搜索失败：{_vision_unavailable_message(context)}",
+                        reply_markup=_forward_action_keyboard(),
+                    )
+                    return
                 data_url = await photo_to_data_url(context.bot, photo_ids[0])
-                prompt = "请介绍图片中的商品或物品，包括名称、用途、特点等。"
+                prompt = "请根据图片介绍其中的商品或物品，包括名称、用途、特点等。用中文直接回答。"
                 if image_hint:
                     prompt = f"{prompt}\n\n已有初步识别：\n{image_hint}"
-                answer = await _openrouter(context).search_with_image(
+                if meaningful_text:
+                    prompt = f"{prompt}\n\n用户文字说明：\n{meaningful_text}"
+                if urls:
+                    prompt = f"{prompt}\n\n相关链接：{urls[0]}"
+                answer = await vision_client.search_with_image(
                     model=_vision_model(context),
                     query=prompt,
                     image_url=data_url,
                     history=history,
                 )
-                search_label = image_hint[:500] or "(图片)"
+                search_label = meaningful_text[:500] or image_hint[:500] or "(图片)"
             else:
+                if not search_text and image_hint:
+                    search_text = f"请介绍以下图片中的商品或物品：\n{image_hint}"
+                if not search_text and urls:
+                    search_text = f"请介绍这个链接的内容: {urls[0]}"
                 answer = await _openrouter(context).search_query(
                     model=_current_model(context),
-                    query=search_text[:2000],
+                    query=(meaningful_text or search_text)[:2000],
                     history=history,
                 )
-                search_label = search_text[:500]
+                search_label = (meaningful_text or search_text)[:500]
             _append_chat_history(context, "user", search_label)
             _append_chat_history(context, "assistant", answer)
             await query.edit_message_text(
@@ -1102,11 +1165,11 @@ async def _save_pending_item(
 
 
 async def on_shutdown(app: Application) -> None:
-    await asyncio.gather(
-        app.bot_data["openrouter"].close(),
-        app.bot_data["search"].close(),
-        app.bot_data["notion"].close(),
-    )
+    clients = [app.bot_data["openrouter"]]
+    vision = app.bot_data.get("vision_client")
+    if vision is not None and vision is not app.bot_data["openrouter"]:
+        clients.append(vision)
+    await asyncio.gather(*(client.close() for client in clients), app.bot_data["search"].close(), app.bot_data["notion"].close())
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -1123,8 +1186,20 @@ def build_application() -> Application:
         .build()
     )
     app.bot_data["settings"] = settings
-    openrouter = OpenRouterClient(settings.openrouter_api_key)
+    openrouter = OpenRouterClient(
+        settings.ai_api_key,
+        base_url=settings.ai_api_base_url,
+    )
     app.bot_data["openrouter"] = openrouter
+    if settings.ai_vision_api_key and settings.ai_vision_api_base_url:
+        app.bot_data["vision_client"] = OpenRouterClient(
+            settings.ai_vision_api_key,
+            base_url=settings.ai_vision_api_base_url,
+        )
+    elif provider_supports_vision(settings.ai_api_base_url) and settings.vision_model.strip():
+        app.bot_data["vision_client"] = openrouter
+    else:
+        app.bot_data["vision_client"] = None
     app.bot_data["product_extract"] = ProductExtractService(openrouter)
     app.bot_data["search"] = SearchService(
         settings.search_result_count,
@@ -1153,8 +1228,14 @@ def _configure_logging() -> None:
     project_root = Path(__file__).resolve().parents[2]
     log_dir = project_root / "logs"
     log_dir.mkdir(exist_ok=True)
+
+    class _FlushFileHandler(logging.FileHandler):
+        def emit(self, record: logging.LogRecord) -> None:
+            super().emit(record)
+            self.flush()
+
     handlers: list[logging.Handler] = [
-        logging.FileHandler(log_dir / "bot.log", encoding="utf-8"),
+        _FlushFileHandler(log_dir / "bot.log", encoding="utf-8"),
     ]
     if sys.stdout is not None and sys.stdout.isatty():
         handlers.append(logging.StreamHandler())
@@ -1166,8 +1247,16 @@ def _configure_logging() -> None:
     )
 
 
+def _write_pid_file() -> None:
+    project_root = Path(__file__).resolve().parents[2]
+    pid_path = project_root / "logs" / "bot.pid"
+    pid_path.parent.mkdir(exist_ok=True)
+    pid_path.write_text(str(os.getpid()), encoding="utf-8")
+
+
 def main() -> None:
     _configure_logging()
+    _write_pid_file()
     app = build_application()
     app.run_polling(allowed_updates=Update.ALL_TYPES)
 
