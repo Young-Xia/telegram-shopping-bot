@@ -53,13 +53,14 @@ copy .env.example .env
 **3. Run**
 
 - From the GUI: **Control** → **Start**
+- Use **Stop** or **Restart** from the same panel; the GUI manages one bot process through `logs/bot.pid`
 - Or from the command line:
 
 ```powershell
 .\start-bot-background.cmd
 ```
 
-> **Note:** The same Telegram Bot Token cannot run in two apps at once. Stop other instances before starting.
+> **Note:** The same Telegram Bot Token cannot run in two apps at once. If the GUI shows a stale process or startup gets stuck, close the panel, run `stop-bot.cmd`, delete `logs\bot.pid` if it still exists, then open the panel again.
 
 ### Environment Variables
 
@@ -88,6 +89,15 @@ Notion database properties (names configurable via `NOTION_*_PROPERTY`):
 | Added At | Date |
 
 See [NOTION-SETUP.md](./NOTION-SETUP.md) for detailed Notion setup.
+
+For mixed providers, use the GUI's **AI Model / API** fields. For example, use DeepSeek for chat and OpenRouter for vision:
+
+```env
+AI_API_BASE_URL=https://api.deepseek.com/v1
+AI_DEFAULT_MODEL=deepseek-chat
+AI_VISION_API_BASE_URL=https://openrouter.ai/api/v1
+AI_VISION_MODEL=google/gemini-2.5-flash
+```
 
 ### Bot Commands
 
@@ -198,13 +208,14 @@ copy .env.example .env
 **3. 运行**
 
 - 控制面板：**运行控制** → **启动**
+- 建议通过同一个面板点击 **停止** 或 **重启**；GUI 会通过 `logs\bot.pid` 管理单个 bot 进程
 - 或命令行：
 
 ```powershell
 .\start-bot-background.cmd
 ```
 
-> **注意：** 同一个 Telegram Bot Token 不能同时在两个程序里运行，启动前请先停止其他实例。
+> **注意：** 同一个 Telegram Bot Token 不能同时在两个程序里运行。如果控制面板显示旧进程或启动卡住，请关闭控制面板，运行 `stop-bot.cmd`，如 `logs\bot.pid` 仍存在则删除它，再重新打开控制面板。
 
 ### 环境变量
 
@@ -233,6 +244,15 @@ Notion 数据库属性（名称可通过 `NOTION_*_PROPERTY` 自定义）：
 | Added At | 日期 (Date) |
 
 详细 Notion 配置见 [NOTION-SETUP.md](./NOTION-SETUP.md)。
+
+如需混合不同 AI 供应商，可在 GUI 的 **AI 模型 / API** 区域配置。例如对话使用 DeepSeek、图片识别使用 OpenRouter：
+
+```env
+AI_API_BASE_URL=https://api.deepseek.com/v1
+AI_DEFAULT_MODEL=deepseek-chat
+AI_VISION_API_BASE_URL=https://openrouter.ai/api/v1
+AI_VISION_MODEL=google/gemini-2.5-flash
+```
 
 ### 机器人命令
 
