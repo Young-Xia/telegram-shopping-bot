@@ -8,6 +8,7 @@ from shopping_bot.categories import DEFAULT_CATEGORIES
 from shopping_bot.models import ProductAnalysis
 from shopping_bot.services.openrouter import OpenRouterClient
 from shopping_bot.services.search import extract_url_from_text, strip_urls_from_text
+from shopping_bot.text_format import format_ai_text
 
 logger = logging.getLogger(__name__)
 
@@ -179,7 +180,7 @@ class ProductExtractService:
             f"链接页面线索（优先参考）：\n{link_hint or '(未读取)'}\n\n"
             f"图片识别结果（优先参考）：\n{image_hint or '(无)'}\n\n"
             f"用户最新补充：\n{user_note or '(无)'}\n\n"
-            "只返回 JSON，不要 markdown，不要解释：\n"
+            "只返回 JSON，不要 markdown，不要解释；字段值里不要使用 *、**、#、`：\n"
             '{"what":"...", "title":"...", "notes":"...", "url":"...", "category":"..."}'
         )
         try:
@@ -205,19 +206,26 @@ class ProductExtractService:
                     what, title, notes, link_hint, image_hint, categories=options
                 )
             return ProductAnalysis(
-                title=title[:200],
+                title=format_ai_text(title)[:200],
                 url=url,
-                notes=notes[:2000],
-                what=what[:200],
+                notes=format_ai_text(notes)[:2000],
+                what=format_ai_text(what)[:200],
                 suggested_category=suggested,
             )
         except Exception:
             logger.warning("AI product extract failed, using fallback", exc_info=True)
-            return _fallback_from_chain(
+            fallback = _fallback_from_chain(
                 thread_text,
                 urls,
                 user_note,
                 link_hint=link_hint,
                 image_hint=image_hint,
                 categories=options,
+            )
+            return ProductAnalysis(
+                title=format_ai_text(fallback.title)[:200],
+                url=fallback.url,
+                notes=format_ai_text(fallback.notes)[:2000],
+                what=format_ai_text(fallback.what)[:200],
+                suggested_category=fallback.suggested_category,
             )

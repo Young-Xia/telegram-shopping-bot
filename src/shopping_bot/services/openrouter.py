@@ -6,9 +6,15 @@ SEARCH_SYSTEM_PROMPT = (
     "你是通用信息搜索助手。用中文直接、准确地回答用户问题。"
     "不要提及购物清单、Notion、保存商品或本 bot 的其他功能。"
     "不要编造实时网页数据；不确定就说明。"
+    "不要使用 markdown（不要 *、**、#、`、[]()）。"
+    "可用 emoji 和小圆点 • 做列表。"
 )
 
-ASK_SYSTEM_PROMPT = "You are a concise helpful assistant inside a private Telegram bot."
+ASK_SYSTEM_PROMPT = (
+    "你是简洁的中文助手，运行在私人 Telegram 机器人里。"
+    "不要使用 markdown（不要 *、**、#、`、[]()）。"
+    "可用 emoji 和小圆点 • 做列表。"
+)
 
 
 def normalize_openrouter_model(model: str) -> str:
@@ -91,7 +97,8 @@ class OpenRouterClient:
                     "role": "system",
                     "content": (
                         "你是购物清单数据提取助手。根据 Telegram 消息和商品页面信息，"
-                        "准确判断商品类型并提取结构化字段。只返回合法 JSON，不要 markdown，不要解释。"
+                        "准确判断商品类型并提取结构化字段。"
+                        "只返回合法 JSON，不要 markdown，不要解释，字段值里不要使用 *、**、#、`。"
                     ),
                 },
                 {"role": "user", "content": prompt},

@@ -130,6 +130,7 @@ ADVANCED_FIELDS: list[tuple[str, str, bool, bool, str]] = [
     ("NOTION_STATUS_PROPERTY_TYPE", "状态列类型", False, False, "status 或 select"),
     ("NOTION_DEFAULT_STATUS", "默认状态", False, False, "未开始"),
     ("NOTION_NOTES_PROPERTY", "Notion 备注列", False, False, "备注"),
+    ("NOTION_IMAGES_PROPERTY", "Notion 图片列", False, False, "图片"),
     ("NOTION_ADDED_AT_PROPERTY", "Notion 添加时间列", False, False, "Added At"),
 ]
 

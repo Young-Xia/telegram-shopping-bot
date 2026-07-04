@@ -34,6 +34,7 @@ class NotionConfig:
     status_property_type: str
     default_status: str
     notes_property: str | None
+    images_property: str | None
     added_at_property: str | None
 
 
@@ -196,6 +197,7 @@ def load_settings(env_files: Iterable[str] = (".env",)) -> Settings:
             status_property_type=os.getenv("NOTION_STATUS_PROPERTY_TYPE", "status"),
             default_status=os.getenv("NOTION_DEFAULT_STATUS", "未开始"),
             notes_property=os.getenv("NOTION_NOTES_PROPERTY", "备注") or None,
+            images_property=os.getenv("NOTION_IMAGES_PROPERTY", "图片") or None,
             added_at_property=os.getenv("NOTION_ADDED_AT_PROPERTY", "Added At") or None,
         ),
     )

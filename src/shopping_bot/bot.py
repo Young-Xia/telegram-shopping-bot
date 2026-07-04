@@ -41,15 +41,22 @@ from shopping_bot.services.search import (
     is_url,
     strip_urls_from_text,
 )
-from shopping_bot.services.vision import analyze_chain_images, collect_photo_file_ids, photo_to_data_url
+from shopping_bot.services.vision import (
+    analyze_chain_images,
+    analyze_photo_file_ids,
+    collect_photo_file_ids,
+    download_photo_bytes,
+    photo_to_data_url,
+)
+from shopping_bot.text_format import format_ai_text
 
 logger = logging.getLogger(__name__)
 
 BOT_COMMANDS = [
     BotCommand("start", "开始使用"),
-    BotCommand("save", "AI 提取回复链并保存"),
-    BotCommand("search", "AI 通用搜索"),
-    BotCommand("clear", "清除 AI 对话上下文"),
+    BotCommand("save", "从回复的消息提取并保存商品"),
+    BotCommand("search", "AI 通用搜索（不写入清单）"),
+    BotCommand("clear", "清除对话与未完成流程"),
     BotCommand("add", "添加商品链接"),
     BotCommand("model", "切换 AI 模型"),
     BotCommand("ask", "向 AI 提问"),
@@ -136,7 +143,7 @@ async def _guard(update: Update, context: ContextTypes.DEFAULT_TYPE) -> bool:
     if _is_authorized(update, _settings(context)):
         return True
     if update.effective_message:
-        await update.effective_message.reply_text("Sorry, this bot is private.")
+        await update.effective_message.reply_text("这是私人机器人，你没有使用权限。")
     return False
 
 
@@ -152,6 +159,7 @@ def _clear_flow_state(context: ContextTypes.DEFAULT_TYPE) -> None:
         "awaiting_category",
         "forward_payload",
         "suggested_category",
+        "pending_photo_file_ids",
     ):
         context.user_data.pop(key, None)
 
@@ -332,12 +340,25 @@ def _extract_meaningful_thread_text(thread_text: str) -> str:
 async def _build_link_hint(context: ContextTypes.DEFAULT_TYPE, urls: list[str]) -> str:
     if not urls:
         return ""
-    try:
-        parsed = await _search(context).parse_link(urls[0])
-        return f"链接页面标题: {parsed.title}\n页面摘要: {parsed.snippet[:400]}"
-    except Exception:
-        logger.warning("Could not prefetch link for AI analysis", exc_info=True)
-        return ""
+    parts: list[str] = []
+    for index, url in enumerate(urls[:2], 1):
+        try:
+            parsed = await _search(context).parse_link(url)
+            label = f"链接{index}" if len(urls) > 1 else "链接页面"
+            title = parsed.title or url
+            snippet = (parsed.snippet or "").strip()
+            block = f"{label}标题: {title}"
+            if parsed.url and parsed.url != url:
+                block += f"\n最终链接: {parsed.url}"
+            else:
+                block += f"\n链接: {parsed.url or url}"
+            if snippet:
+                block += f"\n页面内容:\n{snippet[:1600]}"
+            parts.append(block)
+        except Exception:
+            logger.warning("Could not prefetch link for AI analysis: %s", url, exc_info=True)
+            parts.append(f"链接{index if len(urls) > 1 else ''}读取失败: {url}".strip())
+    return "\n\n".join(parts)
 
 
 def _is_forwarded(message: Message) -> bool:
@@ -363,16 +384,25 @@ async def _build_image_hint(context: ContextTypes.DEFAULT_TYPE, chain: list[Mess
     photo_ids = collect_photo_file_ids(chain)
     if not photo_ids:
         return ""
+    return await _build_image_hint_from_photo_ids(context, photo_ids)
+
+
+async def _build_image_hint_from_photo_ids(
+    context: ContextTypes.DEFAULT_TYPE,
+    photo_ids: list[str],
+) -> str:
+    if not photo_ids:
+        return ""
     client = _vision_client(context)
     if not client:
         return ""
     model = _vision_model(context)
     if not model.strip():
         return ""
-    return await analyze_chain_images(
+    return await analyze_photo_file_ids(
         bot=context.bot,
         client=client,
-        chain=chain,
+        file_ids=photo_ids,
         model=model,
     )
 
@@ -399,13 +429,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if not await _guard(update, context):
         return
     await update.effective_message.reply_text(
-        "购物助手已就绪。\n\n"
-        "• 直接转发（文字、链接或照片）→ 选择「搜索 / 添加商品 / 取消」\n"
-        "• 回复消息 / /save → AI 阅读回复链后直接选分类\n"
-        "• 直接粘贴「文字 + 链接」→ 快速保存\n"
-        "• /search 问题 → AI 通用搜索（与购物无关）\n"
-        "• /clear → 清除 AI 对话上下文\n"
-        "• /cancel → 取消当前操作"
+        "🛒 购物助手已就绪。\n\n"
+        "• 转发文字、链接或图片 → 可选「🔍 搜索」了解内容，或「➕ 添加商品」写入清单\n"
+        "• 粘贴商品链接 → 自动读取页面并提取信息\n"
+        "• 回复某条消息后发送 /save → 从该消息提取商品\n"
+        "• /search 问题 → 通用 AI 搜索（不会写入清单）\n"
+        "• /clear → 清除对话记录和未完成操作\n"
+        "• /cancel → 取消当前添加流程\n"
+        "• /help → 查看更多说明"
     )
 
 
@@ -413,15 +444,21 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     if not await _guard(update, context):
         return
     await update.effective_message.reply_text(
-        "常用功能：\n"
-        "1. 直接转发给 bot（文字、链接或照片）→ 选择「搜索 / 添加商品 / 取消」\n"
-        "2. 回复某条消息或 /save → AI 阅读回复链，直接选分类\n"
-        "3. 直接粘贴「描述 + 链接」\n"
-        "4. /search 问题 → AI 通用搜索（不写入 Notion，不涉及购物）\n"
-        "5. /clear → 清除 /search、/ask 的对话上下文\n"
-        "6. /model → 切换 AI 模型\n"
-        "7. /ask 问题 → 提问\n"
-        "8. /cancel → 取消当前购物流程"
+        "📖 使用说明\n\n"
+        "➕ 添加商品\n"
+        "• 转发商品文字、链接或图片，点「添加商品」\n"
+        "• 直接发送商品链接，机器人会读取页面内容\n"
+        "• 回复一条消息后发送 /save，从该消息提取\n"
+        "• /add 链接 或 /add 商品名 链接\n\n"
+        "🔍 搜索\n"
+        "• 转发后点「搜索」，或发送 /search 你的问题\n"
+        "• 只回答问题，不会写入购物清单\n\n"
+        "🛠 其他\n"
+        "• /ask 问题 → 普通提问\n"
+        "• /model → 查看或切换 AI 模型\n"
+        "• /clear → 清除对话记录和未完成流程\n"
+        "• /cancel → 取消当前添加流程\n\n"
+        "提示：若商品已在清单中（链接相同或名称很像），会更新原条目而不是重复添加。"
     )
 
 
@@ -436,13 +473,13 @@ async def clear_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     _clear_chat_history(context)
     _clear_flow_state(context)
     if not had_chat and not had_flow:
-        await update.effective_message.reply_text("当前没有需要清除的上下文。")
+        await update.effective_message.reply_text("当前没有需要清除的内容。")
         return
     parts: list[str] = []
     if had_chat:
-        parts.append("AI 对话上下文")
+        parts.append("AI 对话记录")
     if had_flow:
-        parts.append("未完成的购物流程")
+        parts.append("未完成的添加流程")
     await update.effective_message.reply_text(f"已清除：{'、'.join(parts)}。")
 
 
@@ -453,10 +490,10 @@ async def cancel_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
         context.user_data.get(key)
         for key in ("pending_item", "awaiting_category")
     ):
-        await update.effective_message.reply_text("当前没有进行中的操作。")
+        await update.effective_message.reply_text("当前没有进行中的添加流程。")
         return
     _clear_flow_state(context)
-    await update.effective_message.reply_text("已取消当前操作。")
+    await update.effective_message.reply_text("已取消当前添加流程。")
 
 
 async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -467,21 +504,19 @@ async def model_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> N
     aliases = settings.model_aliases()
 
     if not requested:
-        models = "\n".join(f"- {model}" for model in settings.models)
+        models = "\n".join(f"• {model}" for model in settings.models)
         await update.effective_message.reply_text(
-            f"Current model: {_current_model(context)}\n\nAvailable:\n{models}"
+            f"当前模型：{_current_model(context)}\n\n可选模型：\n{models}\n\n切换：/model 模型名"
         )
         return
 
     model = aliases.get(requested, requested)
     if model not in settings.models:
-        await update.effective_message.reply_text(
-            "Unknown model. Use /model to see configured models."
-        )
+        await update.effective_message.reply_text("未知模型。发送 /model 查看可用列表。")
         return
 
     context.user_data["model"] = model
-    await update.effective_message.reply_text(f"Model switched to: {model}")
+    await update.effective_message.reply_text(f"已切换模型：{model}")
 
 
 async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -492,9 +527,9 @@ async def ask_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     prompt = _args_text(context)
     if message.reply_to_message and message.reply_to_message.text:
         quoted = message.reply_to_message.text
-        prompt = f"Answer this quoted Telegram message:\n\n{quoted}\n\nUser instruction: {prompt or 'Answer it.'}"
+        prompt = f"请根据下面这条消息回答：\n\n{quoted}\n\n用户要求：{prompt or '请回答。'}"
     if not prompt:
-        await message.reply_text("Send /ask <question>, or reply to a message with /ask.")
+        await message.reply_text("用法：/ask 你的问题\n也可以先回复某条消息，再发送 /ask。")
         return
     await _answer_prompt(update, context, prompt)
 
@@ -512,7 +547,7 @@ async def reply_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
     if _is_forwarded(message) or message.photo:
         chain = _chain_from_message(message)
         if not _should_ai_extract_chain(chain):
-            await message.reply_text("转发的消息里没有可识别的文字、链接或图片。")
+            await message.reply_text("这条转发消息里没有可识别的文字、链接或图片。")
             return
         user_note = _message_body(message) if message.reply_to_message else ""
         await _begin_forward_menu(update, context, chain, user_note=user_note)
@@ -550,22 +585,23 @@ async def reply_text_handler(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def _answer_prompt(update: Update, context: ContextTypes.DEFAULT_TYPE, prompt: str) -> None:
     message = update.effective_message
-    status = await message.reply_text(f"Thinking with {_current_model(context)}...")
+    status = await message.reply_text(f"正在思考（{_current_model(context)}）…")
     try:
         answer = await _openrouter(context).answer(
             model=_current_model(context),
             prompt=prompt,
             history=_get_chat_history(context),
         )
+        answer = format_ai_text(answer)
         _append_chat_history(context, "user", prompt)
         _append_chat_history(context, "assistant", answer)
         await status.edit_text(answer[:4096])
     except httpx.HTTPStatusError as exc:
         logger.exception("OpenRouter HTTP error")
-        await status.edit_text(f"Model request failed: {exc.response.status_code} {exc.response.text[:500]}")
+        await status.edit_text(f"AI 请求失败：{exc.response.status_code} {exc.response.text[:500]}")
     except Exception as exc:  # noqa: BLE001
         logger.exception("OpenRouter request failed")
-        await status.edit_text(f"Model request failed: {exc}")
+        await status.edit_text(f"AI 请求失败：{exc}")
 
 
 async def _begin_link_flow(
@@ -576,37 +612,63 @@ async def _begin_link_flow(
     source: str,
     title_override: str | None = None,
 ) -> None:
-    status = await update.effective_message.reply_text(
-        "正在识别商品信息…" if title_override else "正在读取商品信息…"
-    )
-    snippet = ""
+    status = await update.effective_message.reply_text("正在读取链接内容并提取商品信息…")
     final_url = url
+    link_hint = ""
     try:
         parsed = await _search(context).parse_link(url)
         final_url = parsed.url or url
-        snippet = parsed.snippet
+        title = title_override or parsed.title or final_url
+        snippet = (parsed.snippet or "").strip()
+        link_hint = f"链接页面标题: {title}\n链接: {final_url}"
+        if snippet:
+            link_hint += f"\n页面内容:\n{snippet[:1600]}"
         if not title_override:
             title_override = parsed.title
     except httpx.HTTPStatusError as exc:
         if not title_override:
-            await status.edit_text(f"无法读取链接: {exc.response.status_code} {exc.response.text[:500]}")
+            await status.edit_text(f"无法读取链接：{exc.response.status_code} {exc.response.text[:500]}")
             return
-        snippet = "未能读取页面详情，已使用你提供的文字作为商品名。"
+        link_hint = f"链接页面标题: {title_override}\n链接: {url}\n页面内容: 未能读取页面详情，已使用你提供的文字。"
     except Exception as exc:  # noqa: BLE001
         if not title_override:
             logger.exception("Link parse failed")
-            await status.edit_text(f"无法读取链接: {exc}")
+            await status.edit_text(f"无法读取链接：{exc}")
             return
         logger.warning("Link parse failed, using provided title", exc_info=True)
-        snippet = "未能读取页面详情，已使用你提供的文字作为商品名。"
+        link_hint = f"链接页面标题: {title_override}\n链接: {url}\n页面内容: 未能读取页面详情，已使用你提供的文字。"
 
-    result = SearchResult(
-        title=title_override or final_url,
-        url=final_url,
-        snippet=snippet,
-    )
+    categories: list[str] = []
+    try:
+        categories = await _notion(context).list_categories()
+    except Exception:
+        logger.warning("Could not load Notion categories before link extract", exc_info=True)
+    if not categories:
+        categories = list(DEFAULT_CATEGORIES)
+
+    thread_text = title_override or ""
+    try:
+        analysis = await _analyze_chain_for_product(
+            context,
+            thread_text,
+            [final_url],
+            link_hint=link_hint,
+            categories=categories,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.exception("AI link extract failed")
+        analysis = ProductAnalysis(
+            title=title_override or final_url,
+            url=final_url,
+            notes=(link_hint.split("页面内容:\n", 1)[-1] if "页面内容:" in link_hint else "")[:2000],
+            what="商品链接",
+        )
+
+    if not _analysis_is_saveable(analysis):
+        await status.edit_text("没能从链接识别出商品，请补上商品名称后再试，或改用 /add 商品名 链接。")
+        return
+
     context.user_data["flow_source"] = source
-    analysis = ProductAnalysis(title=result.title, url=result.url, notes=result.snippet)
     await _begin_category_flow(update, context, analysis, status_message=status)
 
 
@@ -670,9 +732,10 @@ async def _begin_ai_chain_flow(
     *,
     user_note: str = "",
 ) -> None:
-    status = await update.effective_message.reply_text("AI 正在阅读回复链并分析…")
+    status = await update.effective_message.reply_text("正在读取消息内容并提取商品信息…")
     thread_text = _format_chain_for_ai(chain)
     urls = _collect_urls_from_chain(chain)
+    link_hint = await _build_link_hint(context, urls)
     image_hint = await _build_image_hint(context, chain)
 
     categories: list[str] = []
@@ -689,29 +752,30 @@ async def _begin_ai_chain_flow(
             thread_text,
             urls,
             user_note=user_note,
+            link_hint=link_hint,
             image_hint=image_hint,
             categories=categories,
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("AI reply-chain extract failed")
-        await status.edit_text(f"无法分析回复链: {exc}")
+        await status.edit_text(f"无法分析这条消息：{exc}")
         return
 
     if not _analysis_is_saveable(analysis):
-        await status.edit_text("无法识别商品信息，请确保消息包含链接、图片或文字描述。")
+        await status.edit_text("没识别到商品信息。请确保消息里有链接、图片或商品描述。")
         return
 
     context.user_data["flow_source"] = "reply_chain"
+    photo_ids = collect_photo_file_ids(chain)
+    if photo_ids:
+        context.user_data["pending_photo_file_ids"] = photo_ids
     await _begin_category_flow(update, context, analysis, status_message=status)
 
 
 def _forward_action_keyboard(*, after_search: bool = False) -> InlineKeyboardMarkup:
     if after_search:
         return InlineKeyboardMarkup(
-            [
-                [InlineKeyboardButton("➕ 添加商品", callback_data="forward:add")],
-                [InlineKeyboardButton("取消", callback_data="forward:cancel")],
-            ]
+            [[InlineKeyboardButton("➕ 添加商品", callback_data="forward:add")]]
         )
     return InlineKeyboardMarkup(
         [
@@ -736,38 +800,53 @@ async def _begin_forward_menu(
     thread_text = _format_chain_for_ai(chain)
     urls = _collect_urls_from_chain(chain)
     photo_ids = collect_photo_file_ids(chain)
-    link_hint = await _build_link_hint(context, urls)
-
     status = None
-    if photo_ids:
-        status = await update.effective_message.reply_text("正在识别图片…")
-    image_hint = await _build_image_hint(context, chain) if photo_ids else ""
+    if urls:
+        status = await update.effective_message.reply_text("正在读取链接内容…")
+    link_hint = await _build_link_hint(context, urls)
+    meaningful_text = _extract_meaningful_thread_text(thread_text)
 
     context.user_data["forward_payload"] = {
         "thread_text": thread_text,
         "urls": urls,
         "user_note": user_note,
         "link_hint": link_hint,
-        "image_hint": image_hint,
         "photo_file_ids": photo_ids,
     }
 
     preview_lines: list[str] = []
-    if thread_text.strip():
-        preview_lines.append(thread_text.strip()[:350])
-    if image_hint:
-        preview_lines.append(f"图片识别: {image_hint[:350]}")
-    elif photo_ids and not _vision_ready(context):
-        preview_lines.append(f"⚠ {_vision_unavailable_message(context)}")
-    elif link_hint:
-        preview_lines.append(link_hint.split("\n", 1)[0])
+    if meaningful_text:
+        preview_lines.append(meaningful_text[:350])
+    elif photo_ids:
+        preview_lines.append("（图片）")
+    if link_hint:
+        first_line = link_hint.split("\n", 1)[0]
+        preview_lines.append(first_line)
+        if "页面内容:" in link_hint:
+            body = link_hint.split("页面内容:", 1)[1].strip().split("\n\n", 1)[0].strip()
+            if body:
+                preview_lines.append(body[:220])
     if urls:
         preview_lines.append(f"链接: {urls[0]}")
     preview = "\n".join(preview_lines) or "（无文字）"
 
-    text = f"收到转发消息：\n\n{preview}\n\n请选择操作："
+    text = (
+        f"收到转发消息：\n\n{preview}\n\n"
+        "请选择：\n"
+        "🔍 搜索 = 了解内容（不写入清单）\n"
+        "➕ 添加商品 = 提取信息并保存到 Notion"
+    )
+    if photo_ids and not _vision_ready(context):
+        text = (
+            f"收到转发消息：\n\n{preview}\n\n"
+            f"⚠️ {_vision_unavailable_message(context)}\n\n"
+            "请选择：\n"
+            "🔍 搜索 = 了解内容（不写入清单）\n"
+            "➕ 添加商品 = 提取信息并保存到 Notion"
+        )
+
     markup = _forward_action_keyboard()
-    if status:
+    if status is not None:
         await status.edit_text(text, reply_markup=markup)
     else:
         await update.effective_message.reply_text(text, reply_markup=markup)
@@ -779,15 +858,45 @@ async def _begin_ai_chain_from_payload(update: Update, context: ContextTypes.DEF
         return
     payload = context.user_data.get("forward_payload")
     if not payload:
-        await query.edit_message_text("已过期，请重新转发。")
+        await query.edit_message_text("这条操作已过期，请重新转发消息。")
         return
 
-    await query.edit_message_text("AI 正在阅读回复链并分析…")
     thread_text = payload["thread_text"]
     urls = payload.get("urls") or []
     user_note = payload.get("user_note") or ""
     link_hint = payload.get("link_hint") or ""
-    image_hint = payload.get("image_hint") or ""
+    photo_ids = payload.get("photo_file_ids") or []
+    if urls and not link_hint:
+        await query.edit_message_text("正在读取链接内容…")
+        link_hint = await _build_link_hint(context, urls)
+        payload["link_hint"] = link_hint
+        context.user_data["forward_payload"] = payload
+
+    status_parts: list[str] = []
+    if urls:
+        status_parts.append("链接")
+    if photo_ids:
+        status_parts.append("图片")
+    status_label = "、".join(status_parts) if status_parts else "消息"
+    await query.edit_message_text(f"正在根据{status_label}提取商品信息…")
+
+    image_hint = ""
+    if photo_ids:
+        image_hint = await _build_image_hint_from_photo_ids(context, photo_ids)
+        has_other_context = bool(
+            _extract_meaningful_thread_text(thread_text) or urls or link_hint
+        )
+        if not image_hint and not has_other_context:
+            detail = (
+                _vision_unavailable_message(context)
+                if not _vision_ready(context)
+                else "未能从图片中识别商品信息。"
+            )
+            await query.edit_message_text(
+                f"没识别到商品：{detail}",
+                reply_markup=_forward_action_keyboard(),
+            )
+            return
 
     categories = context.user_data.get("categories")
     if not categories:
@@ -809,27 +918,30 @@ async def _begin_ai_chain_from_payload(update: Update, context: ContextTypes.DEF
         )
     except Exception as exc:  # noqa: BLE001
         logger.exception("AI reply-chain extract failed")
-        await query.edit_message_text(f"无法分析回复链: {exc}")
+        await query.edit_message_text(f"无法分析这条消息：{exc}")
         return
 
     if not _analysis_is_saveable(analysis):
-        await query.edit_message_text("无法识别商品信息，请确保消息包含链接、图片或文字描述。")
+        await query.edit_message_text("没识别到商品信息。请确保消息里有链接、图片或商品描述。")
         return
 
     context.user_data.pop("forward_payload", None)
     context.user_data["flow_source"] = "forward"
+    if photo_ids:
+        context.user_data["pending_photo_file_ids"] = photo_ids
     await _begin_category_flow(update, context, analysis, edit=True)
 
 
 def _format_product_preview(analysis: ProductAnalysis) -> str:
     lines: list[str] = []
     if analysis.what:
-        lines.append(f"AI 判断：{analysis.what}")
-    lines.append(f"商品: {analysis.title}")
+        lines.append(f"🧠 识别：{format_ai_text(analysis.what)}")
+    lines.append(f"📦 名称：{format_ai_text(analysis.title)}")
     if analysis.url:
-        lines.append(f"链接: {analysis.url}")
+        lines.append(f"🔗 链接：{analysis.url}")
     if analysis.notes:
-        lines.append(analysis.notes)
+        notes = format_ai_text(analysis.notes)
+        lines.append(f"📝 备注：\n{notes}" if "\n" in notes else f"📝 备注：{notes}")
     return "\n".join(lines)
 
 
@@ -854,11 +966,11 @@ async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> Non
     await _acknowledge_message(message, context)
     raw = _args_text(context)
     if not raw:
-        await update.effective_message.reply_text("用法: /add 商品名 链接\n或 /add 链接")
+        await update.effective_message.reply_text("用法：/add 商品名 链接\n或：/add 链接")
         return
     url = extract_url_from_text(raw)
     if not url:
-        await update.effective_message.reply_text("请提供有效的 http(s) 链接。")
+        await update.effective_message.reply_text("请提供有效的 http 或 https 链接。")
         return
     title = _extract_title_from_plain_text(raw, url)
     await _begin_link_flow(update, context, url, source="add", title_override=title)
@@ -870,7 +982,7 @@ async def save_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
     message = update.effective_message
     await _acknowledge_message(message, context)
     if not message.reply_to_message:
-        await message.reply_text("请「回复」一条包含商品信息的消息，然后发送 /save。")
+        await message.reply_text("请先回复一条包含商品信息的消息，再发送 /save。")
         return
     chain = _chain_from_message(message)
     await _begin_ai_chain_flow(update, context, chain, user_note=_args_text(context))
@@ -883,16 +995,16 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
     await _acknowledge_message(message, context)
     query = _args_text(context)
     if not query:
-        await message.reply_text("用法: /search 你的问题\n（通用 AI 搜索，与购物功能无关）")
+        await message.reply_text("用法：/search 你的问题\n（通用 AI 搜索，不会写入购物清单）")
         return
 
     if extract_url_from_text(query):
         await message.reply_text(
-            "保存链接请转发给 bot 或使用 /add。\n/search 仅用于 AI 搜索。"
+            "要保存链接，请直接转发或使用 /add。\n/search 只用于提问搜索，不会写入清单。"
         )
         return
 
-    status = await message.reply_text(f"搜索中：{query}…")
+    status = await message.reply_text(f"🔍 搜索中：{query}…")
     try:
         history = _get_chat_history(context)
         answer = await _openrouter(context).search_query(
@@ -900,15 +1012,16 @@ async def search_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
             query=query,
             history=history,
         )
+        answer = format_ai_text(answer)
         _append_chat_history(context, "user", query)
         _append_chat_history(context, "assistant", answer)
         await status.edit_text(answer[:4096])
     except httpx.HTTPStatusError as exc:
         logger.exception("OpenRouter search failed")
-        await status.edit_text(f"搜索失败: {exc.response.status_code} {exc.response.text[:500]}")
+        await status.edit_text(f"搜索失败：{exc.response.status_code} {exc.response.text[:500]}")
     except Exception as exc:  # noqa: BLE001
         logger.exception("Search failed")
-        await status.edit_text(f"搜索失败: {exc}")
+        await status.edit_text(f"搜索失败：{exc}")
 
 
 async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -920,7 +1033,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
 
     if data == "back:cancel":
         _clear_flow_state(context)
-        await query.edit_message_text("已取消。")
+        await query.edit_message_text("已取消添加。")
         return
 
     if data == "forward:cancel":
@@ -931,21 +1044,20 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if data == "forward:search":
         payload = context.user_data.get("forward_payload")
         if not payload:
-            await query.edit_message_text("已过期，请重新转发。")
+            await query.edit_message_text("这条操作已过期，请重新转发消息。")
             return
 
         search_text = payload["thread_text"].strip()
         meaningful_text = _extract_meaningful_thread_text(search_text)
         urls = payload.get("urls") or []
-        image_hint = payload.get("image_hint") or ""
         photo_ids = payload.get("photo_file_ids") or []
         vision_client = _vision_client(context)
 
-        if not photo_ids and not meaningful_text and not urls and not image_hint:
-            await query.edit_message_text("转发内容里没有可搜索的文字或图片。")
+        if not photo_ids and not meaningful_text and not urls:
+            await query.edit_message_text("转发内容里没有可搜索的文字、链接或图片。")
             return
 
-        await query.edit_message_text("搜索中…")
+        await query.edit_message_text("🔍 搜索中…")
         try:
             history = _get_chat_history(context)
             if photo_ids:
@@ -956,23 +1068,26 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     )
                     return
                 data_url = await photo_to_data_url(context.bot, photo_ids[0])
-                prompt = "请根据图片介绍其中的商品或物品，包括名称、用途、特点等。用中文直接回答。"
-                if image_hint:
-                    prompt = f"{prompt}\n\n已有初步识别：\n{image_hint}"
+                prompt_parts: list[str] = []
                 if meaningful_text:
-                    prompt = f"{prompt}\n\n用户文字说明：\n{meaningful_text}"
+                    prompt_parts.append(f"用户问题或说明：\n{meaningful_text}")
+                else:
+                    prompt_parts.append(
+                        "请观察这张图片，用中文介绍其中的内容并回答可能的相关问题。"
+                        "这是通用搜索，不要当作购物清单或商品入库任务。"
+                        "不要使用 markdown（不要 *、**、#、`）。可用 emoji 和 • 列表。"
+                    )
                 if urls:
-                    prompt = f"{prompt}\n\n相关链接：{urls[0]}"
+                    prompt_parts.append(f"相关链接：{urls[0]}")
+                prompt = "\n\n".join(prompt_parts)
                 answer = await vision_client.search_with_image(
                     model=_vision_model(context),
                     query=prompt,
                     image_url=data_url,
                     history=history,
                 )
-                search_label = meaningful_text[:500] or image_hint[:500] or "(图片)"
+                search_label = meaningful_text[:500] or "(图片)"
             else:
-                if not search_text and image_hint:
-                    search_text = f"请介绍以下图片中的商品或物品：\n{image_hint}"
                 if not search_text and urls:
                     search_text = f"请介绍这个链接的内容: {urls[0]}"
                 answer = await _openrouter(context).search_query(
@@ -981,6 +1096,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
                     history=history,
                 )
                 search_label = (meaningful_text or search_text)[:500]
+            answer = format_ai_text(answer)
             _append_chat_history(context, "user", search_label)
             _append_chat_history(context, "assistant", answer)
             await query.edit_message_text(
@@ -990,13 +1106,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
         except httpx.HTTPStatusError as exc:
             logger.exception("OpenRouter search failed")
             await query.edit_message_text(
-                f"搜索失败: {exc.response.status_code} {exc.response.text[:500]}",
+                f"搜索失败：{exc.response.status_code} {exc.response.text[:500]}",
                 reply_markup=_forward_action_keyboard(),
             )
         except Exception as exc:  # noqa: BLE001
             logger.exception("Search failed")
             await query.edit_message_text(
-                f"搜索失败: {exc}",
+                f"搜索失败：{exc}",
                 reply_markup=_forward_action_keyboard(),
             )
         return
@@ -1008,7 +1124,7 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
     if data == "back:category":
         raw = context.user_data.get("pending_item")
         if not raw:
-            await query.edit_message_text("已取消。")
+            await query.edit_message_text("已取消添加。")
             return
         context.user_data["awaiting_category"] = False
         await _begin_category_flow(update, context, _as_product_analysis(raw), edit=True)
@@ -1021,13 +1137,13 @@ async def callback_handler(update: Update, context: ContextTypes.DEFAULT_TYPE) -
             keyboard = InlineKeyboardMarkup(
                 [[InlineKeyboardButton("« 返回", callback_data="back:category")]]
             )
-            await query.edit_message_text("请输入新的分类名称。", reply_markup=keyboard)
+            await query.edit_message_text("请直接发送新的分类名称。", reply_markup=keyboard)
             return
         categories = context.user_data.get("categories") or []
         try:
             category = categories[int(category_ref)]
         except (ValueError, IndexError):
-            await query.edit_message_text("分类已过期，请重新开始。")
+            await query.edit_message_text("分类列表已过期，请重新添加商品。")
             return
         await _save_pending_item(update, context, category)
 
@@ -1089,10 +1205,13 @@ async def _begin_category_flow(
         categories = list(DEFAULT_CATEGORIES)
     context.user_data["categories"] = categories
 
-    header = "确认保存？"
+    header = "确认保存到购物清单？"
     if analysis.suggested_category and analysis.suggested_category in categories:
-        header = f"确认保存？\n推荐分类：{analysis.suggested_category}"
-    text = f"{header}\n\n{_format_product_preview(analysis)}\n\n请选择分类："
+        header = f"确认保存到购物清单？\n⭐ 推荐分类：{analysis.suggested_category}"
+    text = (
+        f"{header}\n\n{_format_product_preview(analysis)}\n\n"
+        "请选择分类（若清单里已有相似商品，会更新原条目）："
+    )
     markup = _category_keyboard(context)
     if edit and update.callback_query:
         await update.callback_query.edit_message_text(text, reply_markup=markup)
@@ -1108,7 +1227,7 @@ async def _save_with_new_category(
     category: str,
 ) -> None:
     if not category:
-        await update.effective_message.reply_text("分类不能为空。")
+        await update.effective_message.reply_text("分类名称不能为空，请重新输入。")
         return
     context.user_data["awaiting_category"] = False
     await _save_pending_item(update, context, category)
@@ -1122,18 +1241,26 @@ async def _save_pending_item(
     raw = context.user_data.get("pending_item")
     if not raw:
         target = update.callback_query.message if update.callback_query else update.effective_message
-        await target.reply_text("没有待保存的商品，请重新转发链接或使用 /save。")
+        await target.reply_text("没有待保存的商品。请重新转发，或回复消息后发送 /save。")
         return
 
     analysis = _as_product_analysis(raw)
     item = ShoppingItem(
-        title=analysis.title,
+        title=format_ai_text(analysis.title),
         url=analysis.url,
         category=category,
-        notes=analysis.notes,
+        notes=format_ai_text(analysis.notes),
     )
+    photo_file_ids = context.user_data.pop("pending_photo_file_ids", []) or []
+    images: list[tuple[str, bytes, str]] = []
+    for idx, file_id in enumerate(photo_file_ids[:3], 1):
+        try:
+            raw = await download_photo_bytes(context.bot, file_id)
+            images.append((f"photo_{idx}.jpg", raw, "image/jpeg"))
+        except Exception:
+            logger.warning("Could not download Telegram photo %s for Notion", file_id, exc_info=True)
     try:
-        page_url = await _notion(context).add_item(item)
+        result = await _notion(context).add_item(item, images=images or None)
     except httpx.HTTPStatusError as exc:
         logger.exception("Notion HTTP error")
         if exc.response.status_code == 401:
@@ -1148,15 +1275,20 @@ async def _save_pending_item(
                 "注意：如果点了 Regenerate，必须用新 token，旧 token 会立刻失效。"
             )
         else:
-            text = f"Notion save failed: {exc.response.status_code} {exc.response.text[:500]}"
+            text = f"Notion 保存失败：{exc.response.status_code} {exc.response.text[:500]}"
     except Exception as exc:  # noqa: BLE001
         logger.exception("Notion save failed")
-        text = f"Notion save failed: {exc}"
+        text = f"Notion 保存失败：{exc}"
     else:
         _clear_flow_state(context)
-        text = f"已保存到 Notion：[{category}] {item.title}"
-        if page_url:
-            text += f"\n{page_url}"
+        action = "✅ 已更新清单" if result.updated else "✅ 已保存到清单"
+        text = f"{action}：[{category}] {item.title}"
+        if result.attached_images:
+            text += f"\n🖼 已附加 {result.attached_images} 张图片"
+        elif images:
+            text += "\n⚠️ 商品已保存，但图片上传失败"
+        if result.page_url:
+            text += f"\n{result.page_url}"
 
     if update.callback_query:
         await update.callback_query.edit_message_text(text)

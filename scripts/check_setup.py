@@ -110,7 +110,7 @@ async def check_notion(notion: NotionClient) -> None:
 async def check_notion_write(notion: NotionClient) -> None:
     from shopping_bot.models import ShoppingItem
 
-    page_url = await notion.add_item(
+    result = await notion.add_item(
         ShoppingItem(
             title="BOT_CHECK_DELETE_ME",
             url="https://example.com/bot-check",
@@ -118,21 +118,8 @@ async def check_notion_write(notion: NotionClient) -> None:
             notes="Auto test row — safe to delete.",
         )
     )
-    print(f"OK Notion write test page created{f': {page_url}' if page_url else ''}")
-
-
-async def check_notion_write(notion: NotionClient) -> None:
-    from shopping_bot.models import ShoppingItem
-
-    page_url = await notion.add_item(
-        ShoppingItem(
-            title="BOT_CHECK_DELETE_ME",
-            url="https://example.com/bot-check",
-            category="其他",
-            notes="Auto test row — safe to delete.",
-        )
-    )
-    print(f"OK Notion write test page created{f': {page_url}' if page_url else ''}")
+    action = "updated" if result.updated else "created"
+    print(f"OK Notion write test page {action}{f': {result.page_url}' if result.page_url else ''}")
 
 
 async def main() -> None:

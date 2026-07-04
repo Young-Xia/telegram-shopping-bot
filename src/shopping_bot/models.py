@@ -28,3 +28,10 @@ class ShoppingItem:
     url: str
     category: str
     notes: str = ""
+
+
+@dataclass(frozen=True)
+class SaveResult:
+    page_url: str
+    attached_images: int = 0
+    updated: bool = False

@@ -12,8 +12,6 @@ import httpx
 
 from shopping_bot.models import SearchResult
 
-import re
-
 logger = logging.getLogger(__name__)
 
 URL_IN_TEXT_RE = re.compile(r"https?://[^\s<>\"']+", re.IGNORECASE)
@@ -22,11 +20,16 @@ WHITESPACE_RE = re.compile(r"\s+")
 TITLE_RE = re.compile(r"<title[^>]*>(.*?)</title>", re.IGNORECASE | re.DOTALL)
 H1_RE = re.compile(r"<h1[^>]*>(.*?)</h1>", re.IGNORECASE | re.DOTALL)
 TAG_RE = re.compile(r"<[^>]+>")
+SCRIPT_STYLE_RE = re.compile(
+    r"<(script|style|noscript|svg)\b[^>]*>.*?</\1>",
+    re.IGNORECASE | re.DOTALL,
+)
 JSON_LD_RE = re.compile(
     r'<script[^>]+type=["\']application/ld\+json["\'][^>]*>(.*?)</script>',
     re.IGNORECASE | re.DOTALL,
 )
 META_TAG_RE = re.compile(r"<meta\b[^>]*>", re.IGNORECASE)
+BODY_RE = re.compile(r"<body\b[^>]*>(.*?)</body>", re.IGNORECASE | re.DOTALL)
 
 
 def is_url(value: str) -> bool:
@@ -147,15 +150,29 @@ def _normalize_title(title: str, url: str) -> str:
     return title
 
 
-def _build_notes(snippet: str, price: str, image_url: str) -> str:
+def _build_notes(snippet: str, price: str, image_url: str, body_excerpt: str = "") -> str:
     parts: list[str] = []
     if price:
         parts.append(f"价格: {price}")
     if snippet:
         parts.append(f"简介: {snippet}")
+    if body_excerpt and body_excerpt not in snippet:
+        parts.append(f"页面正文: {body_excerpt}")
     if image_url:
         parts.append(f"图片: {image_url}")
     return "\n".join(parts)
+
+
+def _body_text_excerpt(html_text: str, limit: int = 1800) -> str:
+    body_match = BODY_RE.search(html_text)
+    source = body_match.group(1) if body_match else html_text
+    source = SCRIPT_STYLE_RE.sub(" ", source)
+    text = _clean_html_text(source)
+    text = re.sub(r"(.)\1{8,}", r"\1\1\1", text)
+    if len(text) <= limit:
+        return text
+    cut = text[:limit].rsplit(" ", 1)[0].strip()
+    return cut or text[:limit]
 
 
 def _ddgs_client():
@@ -299,7 +316,11 @@ class SearchService:
             price = f"{currency} {price}".strip()
 
         image_url = product.get("image_url") or _meta_content(text, "og:image", "twitter:image")
-        notes = _build_notes(snippet, price, image_url)
+        brand = _meta_content(text, "product:brand", "og:site_name")
+        body_excerpt = _body_text_excerpt(text)
+        notes = _build_notes(snippet, price, image_url, body_excerpt=body_excerpt)
+        if brand and brand.casefold() not in notes.casefold():
+            notes = f"品牌/站点: {brand}\n{notes}".strip()
 
         return SearchResult(title=title, url=final_url, snippet=notes or snippet)
 
