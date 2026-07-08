@@ -22,6 +22,13 @@ A private Telegram bot that saves shopping items to Notion, with AI extraction a
 - **GUI control panel** — configure `.env`, start/stop/restart, logs, light/dark theme
 - **Message acknowledgment** — reacts with 👀 when your message is received
 
+#### Recent updates (2026‑07‑08)
+
+- **Mixed image+text routing** — when a message has both photo and caption, the bot decides whether to focus on the image, the text, or both based on your question (e.g. “翻译图片里的文字” vs “总结这段文字”).
+- **Markdown-free answers** — AI outputs are normalized to plain text (no `**bold**`, `` `code` ``, or `[]()` links) while keeping emoji and bullet lists.
+- **More robust vision pipeline** — retries Telegram photo downloads and falls back cleanly to text-only answers when vision is unavailable.
+- **OpenRouter compatibility** — adds a diagnostic script and safer error messages when privacy / data-policy settings block providers; supports `qwen/qwen3-vl-32b-instruct` as an alternative vision model when OpenAI/Google vision are restricted.
+
 ### Requirements
 
 - Python **3.11+**
@@ -202,6 +209,13 @@ Personal project — use and modify freely. Do **not** commit `.env` or API keys
 - **混合 AI 供应商** — 任意 OpenAI 兼容对话接口，并可单独配置视觉 API
 - **GUI 控制面板** — 配置 `.env`、启停/重启、日志、浅色/深色主题
 - **消息确认** — 收到消息时用 👀 回应
+
+#### 本次更新（2026‑07‑08）
+
+- **图文混合路由**：转发里同时有图片和文字时，根据你的提问自动判断重点看图还是看文字（例如 “翻译图片里的文字” / “总结这段文字”）。
+- **去掉 markdown**：AI 回复统一清理为纯文本，不再出现 `**加粗**`、`` `代码` ``、`[链接](...)` 等 markdown 语法，保留表情和项目符号。
+- **识图链路更稳**：Telegram 下载图片支持重试，视觉模型不可用时会优雅降级为“只根据文字回答”，避免直接报错。
+- **OpenRouter 兼容性**：加入诊断脚本和更清晰的错误提示，当隐私 / 数据策略导致所有提供商被禁用时能直接指向 `openrouter.ai/settings/privacy`；在 OpenAI / Google 视觉被策略限制时，可改用 `qwen/qwen3-vl-32b-instruct` 作为视觉模型。
 
 ### 环境要求
 

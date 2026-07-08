@@ -167,20 +167,20 @@ class ProductExtractService:
         )
 
         prompt = (
-            "你是购物清单助手。请阅读 Telegram 消息、回复链、图片识别结果和商品链接页面信息，"
-            "准确判断这是什么商品/物品。\n\n"
-            "要求：\n"
-            "1. what：用一句话说明类型和品类（例如：淘宝商品-无线蓝牙耳机、京东-厨房收纳盒、拼多多-运动鞋）\n"
-            "2. title：简短清晰的中文商品名（不要包含链接；优先用页面标题、图片识别或消息里的商品名）\n"
-            "3. notes：价格、规格、购买理由、备注等要点，用简洁中文\n"
-            "4. url：从提供的链接里选最合适的一条商品链接；没有则留空字符串\n"
-            f"5. category：从以下分类中选最合适的一个：{category_list}\n\n"
-            f"回复链内容（从旧到新）：\n{effective_thread}\n\n"
-            f"检测到的链接：\n{chr(10).join(urls) if urls else '(无)'}\n\n"
-            f"链接页面线索（优先参考）：\n{link_hint or '(未读取)'}\n\n"
-            f"图片识别结果（优先参考）：\n{image_hint or '(无)'}\n\n"
-            f"用户最新补充：\n{user_note or '(无)'}\n\n"
-            "只返回 JSON，不要 markdown，不要解释；字段值里不要使用 *、**、#、`：\n"
+            "根据消息、链接页面和图片识别结果，提取商品信息。\n"
+            "文案特别简单。人人都懂的词不翻译；只有不常见专业术语才写「中文（English）」。\n\n"
+            "字段要求：\n"
+            "1. what：一句话说明品类，如：无线蓝牙耳机\n"
+            "2. title：简短商品名，不要链接；优先页面标题/图片文字/消息原文\n"
+            "3. notes：只写要点（价格、规格、备注），短句或 • 列表\n"
+            "4. url：最合适的商品链接；没有则空字符串\n"
+            f"5. category：只能从这些里选一个：{category_list}\n\n"
+            f"消息内容（旧→新）：\n{effective_thread}\n\n"
+            f"链接：\n{chr(10).join(urls) if urls else '(无)'}\n\n"
+            f"页面内容：\n{link_hint or '(未读取)'}\n\n"
+            f"图片识别：\n{image_hint or '(无)'}\n\n"
+            f"用户补充：\n{user_note or '(无)'}\n\n"
+            "只返回 JSON，不要解释，字段值不要 *、**、#、`：\n"
             '{"what":"...", "title":"...", "notes":"...", "url":"...", "category":"..."}'
         )
         try:

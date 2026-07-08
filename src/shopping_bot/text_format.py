@@ -3,61 +3,107 @@ from __future__ import annotations
 import re
 
 CODE_FENCE_RE = re.compile(r"```(?:\w+)?\n?(.*?)```", re.DOTALL)
-INLINE_CODE_RE = re.compile(r"`([^`]+)`")
 HEADING_MARK_RE = re.compile(r"^(#{1,6})\s+(.+)$")
 BULLET_RE = re.compile(r"^([*+\-•▪◦])\s+(.+)$")
 NUMBERED_RE = re.compile(r"^(\d+)[.)、]\s+(.+)$")
 BOLD_LINE_RE = re.compile(r"^\*\*(.+)\*\*$")
 HR_RE = re.compile(r"^[\*\-_]{3,}$")
-BOLD_RE = re.compile(r"\*\*(.+?)\*\*")
-ITALIC_UNDERSCORE_RE = re.compile(r"(?<!\w)_(.+?)_(?!\w)")
-LINK_RE = re.compile(r"\[([^\]]+)\]\(([^)]+)\)")
+INLINE_LINK_RE = re.compile(r"\[([^\]]+)\]\([^)]+\)")
+INLINE_CODE_RE = re.compile(r"`([^`]+)`")
+BOLD_INLINE_RE = re.compile(r"\*\*([^*]+)\*\*")
+UNDERLINE_INLINE_RE = re.compile(r"__([^_]+)__")
+STRIKE_INLINE_RE = re.compile(r"~~([^~]+)~~")
+ITALIC_INLINE_RE = re.compile(r"(?<!\*)\*([^*]+)\*(?!\*)")
+ITALIC_UNDER_RE = re.compile(r"(?<!_)_([^_]+)_(?!_)")
 
-HEADING_EMOJI: tuple[tuple[re.Pattern[str], str], ...] = (
-    (re.compile(r"总结|结论|小结|概览|summary|overview", re.I), "📝"),
-    (re.compile(r"优点|优势|亮点|推荐理由|pros", re.I), "✅"),
-    (re.compile(r"缺点|风险|注意|警告|cons|warning", re.I), "⚠️"),
-    (re.compile(r"价格|费用|多少钱|price|cost", re.I), "💰"),
-    (re.compile(r"规格|参数|配置|spec", re.I), "📋"),
-    (re.compile(r"步骤|方法|怎么|如何|教程|steps", re.I), "🔧"),
-    (re.compile(r"链接|网址|来源|link|url", re.I), "🔗"),
-    (re.compile(r"搜索|结果|回答|答案|result", re.I), "🔍"),
-    (re.compile(r"商品|产品|物品|product", re.I), "📦"),
-    (re.compile(r"建议|推荐|recommend", re.I), "⭐"),
+
+# Model often dumps chain-of-thought / prompt restatement before the real answer.
+THINKING_LINE_RE = re.compile(
+    r"^(我们需要理解|这是关于先前|在对话历史中|输出风格必须|所以，?我要|首先回顾|"
+    r"我需要对|作为急诊|注意，这是基于|我按紧急|先给结论|"
+    r"User Safety:|用户追问：|请根据对话历史|不要说你看不到)",
+    re.IGNORECASE,
+)
+ANSWER_START_RE = re.compile(
+    r"^(#{1,3}\s*)?("
+    r"结论|优先|排序|顺序|最终|答案|回答|分诊|建议|"
+    r"第一|最紧急|立即|总结|"
+    r"[✅⚠️🚨📌⭐🔥💡]"
+    r")"
 )
 
 
-def _strip_emphasis(text: str) -> str:
-    text = BOLD_RE.sub(r"\1", text)
-    text = ITALIC_UNDERSCORE_RE.sub(r"\1", text)
-    text = LINK_RE.sub(r"\1 (\2)", text)
-    # Models often leave stray markdown markers; drop them for Telegram plain text.
-    text = text.replace("**", "").replace("__", "").replace("~~", "")
-    text = text.replace("*", "").replace("`", "")
-    text = re.sub(r"[ \t]{2,}", " ", text)
+def strip_model_thinking(text: str) -> str:
+    """Drop prompt-echo / chain-of-thought, keep the final answer body."""
+    if not text:
+        return ""
+    text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    lines = text.split("\n")
+
+    # If the model never leaves "thinking mode", try to find a late answer block.
+    answer_idx: int | None = None
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if ANSWER_START_RE.match(stripped) and idx > 0:
+            # Prefer the last strong answer marker (final conclusion).
+            answer_idx = idx
+
+    if answer_idx is not None and answer_idx > 2:
+        # Only cut if the beginning looks like thinking.
+        head = "\n".join(lines[: min(answer_idx, 8)])
+        if THINKING_LINE_RE.search(head) or "对话历史" in head or "输出风格" in head:
+            return "\n".join(lines[answer_idx:]).strip()
+
+    # Strip leading thinking lines until a normal content line.
+    start = 0
+    thinking_hits = 0
+    for idx, line in enumerate(lines):
+        stripped = line.strip()
+        if not stripped:
+            continue
+        if THINKING_LINE_RE.match(stripped) or "输出风格" in stripped or "对话历史" in stripped:
+            thinking_hits += 1
+            start = idx + 1
+            continue
+        if thinking_hits >= 2 and idx > 3:
+            # Enough evidence the preamble is thinking; keep from here.
+            return "\n".join(lines[idx:]).strip()
+        break
+
+    if start > 0 and start < len(lines):
+        rest = "\n".join(lines[start:]).strip()
+        if rest:
+            return rest
     return text.strip()
 
 
-def _emojify_heading(title: str) -> str:
-    title = _strip_emphasis(title)
-    if not title:
+def strip_inline_markdown(text: str) -> str:
+    """Remove inline markdown markers while keeping the visible text."""
+    if not text:
         return ""
-    if title[0] in "📌📝✅⚠️💰📋🔧🔗🔍📦⭐💡•":
-        return title
-    for pattern, emoji in HEADING_EMOJI:
-        if pattern.search(title):
-            return f"{emoji} {title}"
-    return f"📌 {title}"
+    cleaned = text
+    for _ in range(4):
+        cleaned = INLINE_LINK_RE.sub(r"\1", cleaned)
+        cleaned = BOLD_INLINE_RE.sub(r"\1", cleaned)
+        cleaned = UNDERLINE_INLINE_RE.sub(r"\1", cleaned)
+        cleaned = STRIKE_INLINE_RE.sub(r"\1", cleaned)
+        cleaned = ITALIC_INLINE_RE.sub(r"\1", cleaned)
+        cleaned = ITALIC_UNDER_RE.sub(r"\1", cleaned)
+        cleaned = INLINE_CODE_RE.sub(r"\1", cleaned)
+    return cleaned.replace("**", "").replace("__", "").replace("~~", "")
 
 
 def format_ai_text(text: str) -> str:
-    """Turn model markdown into Telegram-friendly plain text with light emoji."""
+    """Clean model output for Telegram: drop thinking and all markdown."""
     if not text:
         return ""
 
+    text = strip_model_thinking(text)
     text = text.replace("\r\n", "\n").replace("\r", "\n").strip()
+    # Keep fenced code body, drop fences only.
     text = CODE_FENCE_RE.sub(lambda match: match.group(1).strip(), text)
-    text = INLINE_CODE_RE.sub(r"\1", text)
 
     lines: list[str] = []
     for raw_line in text.split("\n"):
@@ -72,27 +118,25 @@ def format_ai_text(text: str) -> str:
 
         heading = HEADING_MARK_RE.match(stripped)
         if heading:
-            lines.append(_emojify_heading(heading.group(2)))
+            lines.append(heading.group(2).strip())
             continue
 
         bold_line = BOLD_LINE_RE.fullmatch(stripped)
         if bold_line:
-            lines.append(_emojify_heading(bold_line.group(1)))
+            lines.append(bold_line.group(1).strip())
             continue
 
         bullet = BULLET_RE.match(stripped)
         if bullet:
-            lines.append(f"• {_strip_emphasis(bullet.group(2))}")
+            lines.append(f"• {bullet.group(2).strip()}")
             continue
 
         numbered = NUMBERED_RE.match(stripped)
         if numbered:
-            lines.append(f"{numbered.group(1)}. {_strip_emphasis(numbered.group(2))}")
+            lines.append(f"{numbered.group(1)}. {numbered.group(2).strip()}")
             continue
 
-        # Keep indentation lightly for nested plain lines.
-        prefix = "  " if line[:1] in {" ", "\t"} else ""
-        lines.append(f"{prefix}{_strip_emphasis(stripped)}")
+        lines.append(strip_inline_markdown(stripped))
 
     cleaned: list[str] = []
     blank_run = 0

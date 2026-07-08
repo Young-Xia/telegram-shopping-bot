@@ -1005,6 +1005,12 @@ class ShoppingBotApp(ctk.CTk):
                     text_color=p.nav_text,
                 )
 
+        if page_id in {"control", "setup"}:
+            try:
+                self.load_settings()
+            except Exception:
+                pass
+
         if page_id == "logs" and self._logs_built:
             self.refresh_logs()
             self._schedule_log_poll()
@@ -1172,8 +1178,9 @@ class ShoppingBotApp(ctk.CTk):
             self._cached_env["AI_VISION_MODEL"] = model
         if self._setup_built and "AI_VISION_MODEL" in self._field_rows:
             self._field_rows["AI_VISION_MODEL"].set(model)
+        self.load_settings()
         self.control_message.configure(
-            text=f"视觉模型已保存到 {path}，修改后请重启机器人生效。",
+            text=f"视觉模型已保存为：{model}（机器人会自动读取最新配置）",
             text_color=self.palette.success,
         )
 
@@ -1257,6 +1264,12 @@ class ShoppingBotApp(ctk.CTk):
 
     def _finish_action(self, ok: bool, message: str) -> None:
         self._set_busy(False)
+        # Reload .env into the form so current models/keys are visible without
+        # restarting the whole control panel.
+        try:
+            self.load_settings()
+        except Exception:
+            pass
         color = self.palette.success if ok else self.palette.danger
         if self._current_page == "control":
             self.control_message.configure(text=message, text_color=color)

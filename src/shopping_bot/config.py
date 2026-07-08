@@ -43,8 +43,6 @@ DEFAULT_AI_API_BASE_URL = "https://openrouter.ai/api/v1"
 DEFAULT_VISION_MODEL = "google/gemini-2.5-flash"
 
 _DEPRECATED_VISION_MODELS: dict[str, str] = {
-    "google/gemini-2.0-flash-001": DEFAULT_VISION_MODEL,
-    "google/gemini-2.0-flash": DEFAULT_VISION_MODEL,
     "google/gemini-2.0-flash-exp": DEFAULT_VISION_MODEL,
     "google/gemini-2.0-flash-exp:free": DEFAULT_VISION_MODEL,
 }

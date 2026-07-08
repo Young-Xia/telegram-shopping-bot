@@ -1,19 +1,22 @@
 from __future__ import annotations
 
+import asyncio
 import base64
 import logging
 
 import httpx
 from telegram import Bot, Message
+from telegram.error import NetworkError, TimedOut
 
 from shopping_bot.services.openrouter import OpenRouterClient
 
 logger = logging.getLogger(__name__)
 
 DESCRIBE_PROMPT = (
-    "用中文描述图片中的商品或物品。包括：名称、品牌、包装文字、价格标签、"
-    "规格参数等可见信息。若有多件物品，分别列出。简洁准确，不要臆测看不见的内容。"
-    "不要使用 markdown（不要 *、**、#、`）。"
+    "用特别简单的中文描述图中可见商品/物品。"
+    "只写看得到的：名称、品牌、包装文字、价格、规格。"
+    "人人都懂的词不翻译；只有不常见专业术语才写「中文（English）」。"
+    "多件物品分行列出。不要臆测看不见的内容，不要 markdown（不要 *、**、#、`）。"
 )
 
 
@@ -32,15 +35,39 @@ def collect_photo_file_ids(chain: list[Message]) -> list[str]:
 
 
 async def photo_to_data_url(bot: Bot, file_id: str) -> str:
-    tg_file = await bot.get_file(file_id)
-    raw = await tg_file.download_as_bytearray()
+    raw = await _download_photo_bytearray(bot, file_id)
     encoded = base64.b64encode(bytes(raw)).decode("ascii")
     return f"data:image/jpeg;base64,{encoded}"
 
 
 async def download_photo_bytes(bot: Bot, file_id: str) -> bytes:
-    tg_file = await bot.get_file(file_id)
-    return bytes(await tg_file.download_as_bytearray())
+    return bytes(await _download_photo_bytearray(bot, file_id))
+
+
+async def _download_photo_bytearray(bot: Bot, file_id: str) -> bytearray:
+    """Download telegram photo bytes with retries.
+
+    Telegram's getFile / file download can intermittently time out. Retrying
+    usually fixes it.
+    """
+    delays = (0.5, 1.5, 3.0)
+    last_exc: Exception | None = None
+    for attempt, delay in enumerate((0.0, *delays), 1):
+        if delay:
+            await asyncio.sleep(delay)
+        try:
+            tg_file = await bot.get_file(file_id)
+            return await tg_file.download_as_bytearray()
+        except (TimedOut, NetworkError) as exc:
+            last_exc = exc
+            logger.warning(
+                "Telegram image download failed (attempt %s): %s",
+                attempt,
+                exc,
+                exc_info=True,
+            )
+            continue
+    raise TimedOut(str(last_exc or "Timed out"))
 
 
 async def analyze_photo_file_ids(
